@@ -40,6 +40,7 @@ class MainScreen(Screen):
         Binding("G", "bottom", "bottom", show=False),
         Binding("a", "new_task", "add"),
         Binding("e,enter", "edit_task", "edit"),
+        Binding("n", "add_note", "note"),
         Binding("d", "delete_task", "delete"),
         Binding("s", "advance_bucket", "advance"),
         Binding("p", "cycle_priority", "priority"),
@@ -280,6 +281,18 @@ class MainScreen(Screen):
                 self._reload_active_engagement()
 
         self.app.push_screen(TaskDetailScreen(task_id), _after)
+
+    def action_add_note(self) -> None:
+        task_id = self._selected_task_id()
+        if not task_id:
+            return
+        from openitems.tui.screens.quick_note import QuickNoteScreen
+
+        def _after(result: bool) -> None:
+            if result:
+                self._reload_active_engagement()
+
+        self.app.push_screen(QuickNoteScreen(task_id), _after)
 
     def action_delete_task(self) -> None:
         task_id = self._selected_task_id()

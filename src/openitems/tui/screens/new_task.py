@@ -3,7 +3,7 @@ from __future__ import annotations
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
 from textual.widgets import Button, Input, Label, Select, TextArea
@@ -49,20 +49,17 @@ class NewTaskScreen(ModalScreen[bool]):
         self.desc_input.styles.height = 6
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="modal"):
+        with VerticalScroll(classes="modal"):
             yield Label("[b]new task[/b]", classes="modal-title")
             yield self.name_input
             with Horizontal():
                 yield self.bucket_input
                 yield self.priority_select
             yield self.assigned_input
-            with Horizontal():
-                with Vertical():
-                    yield Label("Start", classes="dim")
-                    yield self.start_input
-                with Vertical():
-                    yield Label("Due", classes="dim")
-                    yield self.due_input
+            yield Label("Start", classes="dim")
+            yield self.start_input
+            yield Label("Due", classes="dim")
+            yield self.due_input
             yield self.labels_input
             yield Label("Description", classes="dim")
             yield self.desc_input

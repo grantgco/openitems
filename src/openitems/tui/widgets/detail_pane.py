@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 
+import humanize
 from rich.console import Group
 from rich.text import Text
 from textual.app import ComposeResult
@@ -10,9 +11,13 @@ from textual.message import Message
 from textual.widgets import Label, Static
 
 from openitems.db.models import Task
+from openitems.domain import notes as notes_mod
 from openitems.domain.tasks import completed_checks, is_late, total_checks
 from openitems.tui import palette
 from openitems.tui.widgets.task_format import format_date, format_priority, format_tags
+
+_MAX_NOTES_IN_DETAIL = 3
+_NOTE_PREVIEW_CHARS = 60
 
 
 class DetailPane(Vertical):
@@ -83,6 +88,40 @@ class DetailPane(Vertical):
             for c in checks:
                 marker = Text("[x]  ", style=palette.GREEN) if c.completed else Text("[ ]  ", style=palette.DIM)
                 rows.append(Text.assemble(marker, Text(c.text, style=palette.FG if c.completed else palette.DIM)))
+
+        recent_notes = notes_mod.list_for(task)
+        rows.append(Text(""))
+        if recent_notes:
+            now = datetime.now(UTC).replace(tzinfo=None)
+            shown = recent_notes[:_MAX_NOTES_IN_DETAIL]
+            header_suffix = (
+                f"  ({len(recent_notes)})"
+                if len(recent_notes) > _MAX_NOTES_IN_DETAIL
+                else ""
+            )
+            rows.append(
+                Text(f"─ notes{header_suffix}  (n to add) ──────", style=palette.DIM)
+            )
+            for n in shown:
+                relative = humanize.naturaltime(now - n.created_at)
+                preview = n.body.replace("\n", " | ")
+                if len(preview) > _NOTE_PREVIEW_CHARS:
+                    preview = preview[: _NOTE_PREVIEW_CHARS - 1] + "…"
+                rows.append(
+                    Text.assemble(
+                        Text(relative, style=palette.DIM),
+                        Text("  ·  ", style=palette.DIM),
+                        Text(preview, style=palette.FG),
+                    )
+                )
+            if len(recent_notes) > _MAX_NOTES_IN_DETAIL:
+                hidden = len(recent_notes) - _MAX_NOTES_IN_DETAIL
+                rows.append(
+                    Text(f"… {hidden} older (open with e)", style=palette.DIM)
+                )
+        else:
+            rows.append(Text("─ notes  (n to add) ──────────", style=palette.DIM))
+            rows.append(Text("no notes yet", style=palette.DIM))
 
         self._body.update(Group(*rows))
 

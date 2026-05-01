@@ -53,9 +53,13 @@ class ItemsPane(Vertical):
         self._tasks = list(tasks)
         self.table.clear()
         for idx, task in enumerate(self._tasks, start=1):
+            note_count = len(task.notes)
+            name_cell = Text(task.name, style=palette.FG)
+            if note_count:
+                name_cell.append(f"  ✎{note_count}", style=palette.DIM)
             self.table.add_row(
                 Text(str(idx).rjust(3), style=palette.DIM),
-                Text(task.name, style=palette.FG),
+                name_cell,
                 format_tags(task.labels),
                 format_priority(task.priority),
                 format_due(task.due_date, is_late(task, self._today)),

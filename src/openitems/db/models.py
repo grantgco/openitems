@@ -84,6 +84,11 @@ class Task(Base):
         cascade="all, delete-orphan",
         order_by="ChecklistItem.sort_order",
     )
+    notes: Mapped[list[TaskNote]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="TaskNote.created_at",
+    )
 
 
 class ChecklistItem(Base):
@@ -103,6 +108,21 @@ class ChecklistItem(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     task: Mapped[Task] = relationship(back_populates="checklist_items")
+
+
+class TaskNote(Base):
+    __tablename__ = "task_note"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("task.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False, index=True
+    )
+
+    task: Mapped[Task] = relationship(back_populates="notes")
 
 
 class AuditEntry(Base):

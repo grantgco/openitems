@@ -15,6 +15,7 @@ _HELP = """[b]navigation[/b]
 [b]editing[/b]
   a                   new task
   e or enter          edit selected task
+  n                   add note to selected task
   d                   soft-delete
   u                   undo last delete
   s                   advance task to next workflow stage

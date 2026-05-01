@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+import humanize
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
 from textual.widgets import Button, Input, Label, OptionList, Select, TextArea
@@ -12,7 +15,7 @@ from textual.widgets.option_list import Option
 from openitems.db.engine import session_scope
 from openitems.db.models import Task
 from openitems.domain import buckets as buckets_mod
-from openitems.domain import checklists, tasks
+from openitems.domain import checklists, notes, tasks
 from openitems.domain.constants import PRIORITIES
 from openitems.domain.dates import DateParseError, parse_strict as parse_date_strict
 from openitems.domain.text import parse_labels
@@ -46,9 +49,11 @@ class TaskDetailScreen(ModalScreen[bool]):
         self.desc_input.styles.height = 6
         self.checklist_input = Input(placeholder="Add checklist item, press Enter", id="checklist-add")
         self.checklist_options = OptionList(id="checklist-options")
+        self.note_input = Input(placeholder="Add note (thought / update), press Enter", id="note-add")
+        self.note_options = OptionList(id="note-options")
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="modal"):
+        with VerticalScroll(classes="modal"):
             yield Label("[b]edit task[/b]", classes="modal-title")
             yield Label("Name", classes="dim")
             yield self.name_input
@@ -61,13 +66,10 @@ class TaskDetailScreen(ModalScreen[bool]):
                     yield self.priority_select
             yield Label("Assigned to", classes="dim")
             yield self.assigned_input
-            with Horizontal():
-                with Vertical():
-                    yield Label("Start", classes="dim")
-                    yield self.start_input
-                with Vertical():
-                    yield Label("Due", classes="dim")
-                    yield self.due_input
+            yield Label("Start", classes="dim")
+            yield self.start_input
+            yield Label("Due", classes="dim")
+            yield self.due_input
             yield Label("Tags", classes="dim")
             yield self.labels_input
             yield Label("Description", classes="dim")
@@ -75,6 +77,9 @@ class TaskDetailScreen(ModalScreen[bool]):
             yield Label("Checklist  (space toggles selected, del removes)", classes="dim")
             yield self.checklist_options
             yield self.checklist_input
+            yield Label("Notes  (newest first, append-only)", classes="dim")
+            yield self.note_options
+            yield self.note_input
             with Horizontal():
                 yield Button("Save  (^S)", id="save", classes="-primary")
                 yield Button("Cancel  (Esc)", id="cancel")
@@ -99,6 +104,7 @@ class TaskDetailScreen(ModalScreen[bool]):
             self.labels_input.value = task.labels
             self.desc_input.text = task.description
             self._refresh_checklist(task)
+            self._refresh_notes(task)
 
     def _refresh_checklist(self, task: Task) -> None:
         self.checklist_options.clear_options()
@@ -107,6 +113,33 @@ class TaskDetailScreen(ModalScreen[bool]):
                 continue
             prefix = "[x] " if c.completed else "[ ] "
             self.checklist_options.add_option(Option(prefix + c.text, id=c.id))
+
+    def _refresh_notes(self, task: Task) -> None:
+        self.note_options.clear_options()
+        now = datetime.now(UTC).replace(tzinfo=None)
+        for n in notes.list_for(task):
+            relative = humanize.naturaltime(now - n.created_at)
+            preview = n.body.replace("\n", " | ")
+            if len(preview) > 80:
+                preview = preview[:77] + "…"
+            self.note_options.add_option(Option(f"{relative}  ·  {preview}", id=n.id))
+
+    @on(Input.Submitted, "#note-add")
+    def _add_note(self, event: Input.Submitted) -> None:
+        body = event.value.strip()
+        if not body:
+            return
+        with session_scope() as s:
+            task = s.get(Task, self.task_id)
+            if task is None:
+                return
+            try:
+                notes.add(s, task, body)
+            except ValueError as exc:
+                self.app.notify(str(exc), severity="error")
+                return
+            self._refresh_notes(task)
+        self.note_input.value = ""
 
     @on(Input.Submitted, "#checklist-add")
     def _add_check(self, event: Input.Submitted) -> None:
@@ -154,6 +187,8 @@ class TaskDetailScreen(ModalScreen[bool]):
         except DateParseError as exc:
             self.app.notify(str(exc), severity="error")
             return
+        pending_note = self.note_input.value.strip()
+        pending_check = self.checklist_input.value.strip()
         try:
             with session_scope() as s:
                 task = s.get(Task, self.task_id)
@@ -177,6 +212,10 @@ class TaskDetailScreen(ModalScreen[bool]):
                     labels=", ".join(parse_labels(self.labels_input.value)),
                     bucket_id=bucket_id,
                 )
+                if pending_note:
+                    notes.add(s, task, pending_note)
+                if pending_check:
+                    checklists.add(s, task, pending_check)
         except ValueError as exc:
             self.app.notify(str(exc), severity="error")
             return
