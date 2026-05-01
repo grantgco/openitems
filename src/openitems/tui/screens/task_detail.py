@@ -50,14 +50,25 @@ class TaskDetailScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(classes="modal"):
             yield Label("[b]edit task[/b]", classes="modal-title")
+            yield Label("Name", classes="dim")
             yield self.name_input
             with Horizontal():
-                yield self.bucket_input
-                yield self.priority_select
+                with Vertical():
+                    yield Label("Workflow stage", classes="dim")
+                    yield self.bucket_input
+                with Vertical():
+                    yield Label("Priority", classes="dim")
+                    yield self.priority_select
+            yield Label("Assigned to", classes="dim")
             yield self.assigned_input
             with Horizontal():
-                yield self.start_input
-                yield self.due_input
+                with Vertical():
+                    yield Label("Start", classes="dim")
+                    yield self.start_input
+                with Vertical():
+                    yield Label("Due", classes="dim")
+                    yield self.due_input
+            yield Label("Tags", classes="dim")
             yield self.labels_input
             yield Label("Description", classes="dim")
             yield self.desc_input

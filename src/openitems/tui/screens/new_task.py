@@ -57,8 +57,12 @@ class NewTaskScreen(ModalScreen[bool]):
                 yield self.priority_select
             yield self.assigned_input
             with Horizontal():
-                yield self.start_input
-                yield self.due_input
+                with Vertical():
+                    yield Label("Start", classes="dim")
+                    yield self.start_input
+                with Vertical():
+                    yield Label("Due", classes="dim")
+                    yield self.due_input
             yield self.labels_input
             yield Label("Description", classes="dim")
             yield self.desc_input

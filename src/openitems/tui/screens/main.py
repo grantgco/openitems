@@ -45,6 +45,7 @@ class MainScreen(Screen):
         Binding("p", "cycle_priority", "priority"),
         Binding("space", "toggle_check", "check"),
         Binding("slash", "focus_filter", "filter"),
+        Binding("escape", "blur_filter", "leave filter", show=False, priority=True),
         Binding("u", "undo", "undo"),
         Binding("x", "export", "export"),
         Binding("X", "quick_export", "quick-export"),
@@ -374,6 +375,10 @@ class MainScreen(Screen):
 
     def action_focus_filter(self) -> None:
         self.filter_bar.focus()
+
+    def action_blur_filter(self) -> None:
+        if self.focused is self.filter_bar:
+            self._focus_pane("items-pane")
 
     def action_jump_bucket(self, idx: int) -> None:
         if not self._bucket_names:
