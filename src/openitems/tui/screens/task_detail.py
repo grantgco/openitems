@@ -49,6 +49,12 @@ class TaskDetailScreen(ModalScreen[bool]):
         self.desc_input.styles.height = 6
         self.checklist_input = Input(placeholder="Add checklist item, press Enter", id="checklist-add")
         self.checklist_options = OptionList(id="checklist-options")
+        self.note_kind_select = Select(
+            [(f"{notes.glyph_for(k)}  {k}", k) for k in notes.NOTE_KINDS],
+            value=notes.DEFAULT_KIND,
+            id="note-kind",
+            allow_blank=False,
+        )
         self.note_input = Input(placeholder="Add note (thought / update), press Enter", id="note-add")
         self.note_options = OptionList(id="note-options")
 
@@ -79,6 +85,8 @@ class TaskDetailScreen(ModalScreen[bool]):
             yield self.checklist_input
             yield Label("Notes  (newest first, append-only)", classes="dim")
             yield self.note_options
+            yield Label("Kind", classes="dim")
+            yield self.note_kind_select
             yield self.note_input
             with Horizontal():
                 yield Button("Save  (^S)", id="save", classes="-primary")
@@ -122,24 +130,31 @@ class TaskDetailScreen(ModalScreen[bool]):
             preview = n.body.replace("\n", " | ")
             if len(preview) > 80:
                 preview = preview[:77] + "…"
-            self.note_options.add_option(Option(f"{relative}  ·  {preview}", id=n.id))
+            glyph = notes.glyph_for(n.kind)
+            self.note_options.add_option(
+                Option(f"{glyph}  {relative}  ·  {preview}", id=n.id)
+            )
 
     @on(Input.Submitted, "#note-add")
     def _add_note(self, event: Input.Submitted) -> None:
         body = event.value.strip()
         if not body:
             return
+        kind = str(self.note_kind_select.value or notes.DEFAULT_KIND)
         with session_scope() as s:
             task = s.get(Task, self.task_id)
             if task is None:
                 return
             try:
-                notes.add(s, task, body)
+                notes.add(s, task, body, kind=kind)
             except ValueError as exc:
                 self.app.notify(str(exc), severity="error")
                 return
             self._refresh_notes(task)
         self.note_input.value = ""
+        # Keep the chosen kind for the next note — don't reset, since most
+        # users add multiple notes of the same kind in a row (e.g. several
+        # call updates from one phone session).
 
     @on(Input.Submitted, "#checklist-add")
     def _add_check(self, event: Input.Submitted) -> None:
@@ -188,6 +203,7 @@ class TaskDetailScreen(ModalScreen[bool]):
             self.app.notify(str(exc), severity="error")
             return
         pending_note = self.note_input.value.strip()
+        pending_note_kind = str(self.note_kind_select.value or notes.DEFAULT_KIND)
         pending_check = self.checklist_input.value.strip()
         try:
             with session_scope() as s:
@@ -213,7 +229,7 @@ class TaskDetailScreen(ModalScreen[bool]):
                     bucket_id=bucket_id,
                 )
                 if pending_note:
-                    notes.add(s, task, pending_note)
+                    notes.add(s, task, pending_note, kind=pending_note_kind)
                 if pending_check:
                     checklists.add(s, task, pending_check)
         except ValueError as exc:

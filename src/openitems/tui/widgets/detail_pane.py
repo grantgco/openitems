@@ -107,8 +107,10 @@ class DetailPane(Vertical):
                 preview = n.body.replace("\n", " | ")
                 if len(preview) > _NOTE_PREVIEW_CHARS:
                     preview = preview[: _NOTE_PREVIEW_CHARS - 1] + "…"
+                glyph = notes_mod.glyph_for(n.kind)
                 rows.append(
                     Text.assemble(
+                        Text(f"{glyph}  ", style=palette.ACCENT),
                         Text(relative, style=palette.DIM),
                         Text("  ·  ", style=palette.DIM),
                         Text(preview, style=palette.FG),

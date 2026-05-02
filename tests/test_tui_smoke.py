@@ -227,14 +227,17 @@ async def test_n_keybind_opens_quick_note_and_saves(app_environment):
         await pilot.press("n")
         await pilot.pause()
         assert app.screen.__class__.__name__ == "QuickNoteScreen"
-        app.screen.body_input.text = "captured a thought from the field"
+        app.screen.body_input.text = "called Jess re: cutover"
+        app.screen.kind_select.value = "call"
         await pilot.press("ctrl+s")
         await pilot.pause()
         assert app.screen.__class__.__name__ == "MainScreen"
 
     with session_scope() as s:
         rows = s.scalars(select(TaskNote)).all()
-        assert [n.body for n in rows] == ["captured a thought from the field"]
+        assert [(n.body, n.kind) for n in rows] == [
+            ("called Jess re: cutover", "call")
+        ]
 
 
 @pytest.mark.asyncio

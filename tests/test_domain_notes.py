@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from openitems.domain import engagements, notes, tasks
+from openitems.domain.notes import DEFAULT_KIND, NOTE_KINDS, cycle_kind, glyph_for
 from openitems.domain.tasks import TaskInput
 
 
@@ -34,6 +35,41 @@ def test_list_for_returns_newest_first(session):
     assert [n.body for n in ordered] == ["third", "second", "first"]
     assert ordered[0].id == n3.id
     assert ordered[-1].id == n1.id
+
+
+def test_default_kind_is_update(session):
+    t = _task(session)
+    n = notes.add(session, t, "first")
+    assert n.kind == DEFAULT_KIND == "update"
+
+
+def test_kind_persists(session):
+    t = _task(session)
+    n = notes.add(session, t, "phoned Jess", kind="call")
+    assert n.kind == "call"
+
+
+def test_invalid_kind_raises(session):
+    t = _task(session)
+    with pytest.raises(ValueError):
+        notes.add(session, t, "body", kind="not-a-kind")
+
+
+def test_cycle_kind_wraps():
+    first = NOTE_KINDS[0]
+    last = NOTE_KINDS[-1]
+    assert cycle_kind(first) == NOTE_KINDS[1]
+    assert cycle_kind(last) == first
+    assert cycle_kind(first, direction=-1) == last
+    assert cycle_kind("garbage") == DEFAULT_KIND
+
+
+def test_glyph_falls_back_to_update():
+    # Every defined kind has a glyph
+    for k in NOTE_KINDS:
+        assert glyph_for(k)
+    # Unknown kinds fall back to the default glyph rather than crashing
+    assert glyph_for("unknown") == glyph_for(DEFAULT_KIND)
 
 
 def test_notes_cascade_delete_with_task(session):

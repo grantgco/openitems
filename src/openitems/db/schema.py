@@ -23,13 +23,24 @@ def init_schema() -> None:
 def _apply_lightweight_migrations() -> None:
     engine = get_engine()
     insp = inspect(engine)
-    if "bucket" not in insp.get_table_names():
-        return
-    cols = {c["name"] for c in insp.get_columns("bucket")}
-    if "is_done_state" not in cols:
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    "ALTER TABLE bucket ADD COLUMN is_done_state BOOLEAN NOT NULL DEFAULT 0"
+    table_names = set(insp.get_table_names())
+    if "bucket" in table_names:
+        cols = {c["name"] for c in insp.get_columns("bucket")}
+        if "is_done_state" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE bucket ADD COLUMN is_done_state "
+                        "BOOLEAN NOT NULL DEFAULT 0"
+                    )
                 )
-            )
+    if "task_note" in table_names:
+        cols = {c["name"] for c in insp.get_columns("task_note")}
+        if "kind" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE task_note ADD COLUMN kind "
+                        "TEXT NOT NULL DEFAULT 'update'"
+                    )
+                )
