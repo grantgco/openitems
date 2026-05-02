@@ -346,6 +346,37 @@ async def test_L_keybind_opens_activity_log_with_notes(app_environment):
 
 
 @pytest.mark.asyncio
+async def test_D_keybind_writes_digest_file(app_environment, monkeypatch):
+    """Pressing D writes a Markdown digest file to the exports dir.
+
+    We monkeypatch subprocess.run so the test doesn't actually open the
+    file with the OS default app.
+    """
+    from openitems.tui.app import OpenItemsApp
+
+    opened: list[str] = []
+
+    def fake_run(cmd, *args, **kwargs):
+        opened.append(str(cmd))
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("D")
+        await pilot.pause()
+
+    from openitems.paths import exports_dir
+
+    files = sorted(exports_dir().glob("*-digest-*.md"))
+    assert files, f"no digest files in {exports_dir()}"
+    body = files[0].read_text()
+    assert body.startswith("# Acme Co"), body[:80]
+    assert "**Status:**" in body
+
+
+@pytest.mark.asyncio
 async def test_help_modal_opens_and_closes(app_environment):
     from openitems.tui.app import OpenItemsApp
 

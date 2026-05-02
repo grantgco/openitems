@@ -71,6 +71,12 @@ def db_path() -> Path:
 
 
 def exports_dir() -> Path:
-    p = data_dir() / "exports"
+    """Where written `.xlsx` / `.md` exports go.
+
+    Lives next to the DB (`<db_path>/../exports/`) so the user-visible
+    `~/openitems/` directory contains both the database and its exports
+    in one place. Honors `OPENITEMS_DB` / config overrides automatically.
+    """
+    p = db_path().parent / "exports"
     p.mkdir(parents=True, exist_ok=True)
     return p

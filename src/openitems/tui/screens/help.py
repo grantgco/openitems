@@ -25,8 +25,9 @@ _HELP = """[b]navigation[/b]
 
 [b]other[/b]
   /                   focus filter / search
-  x                   open export wizard
+  x                   open export wizard (.xlsx workplan)
   X                   quick-export with last settings
+  D                   write Markdown digest (this week, opens in default app)
   E                   switch engagement
   ?                   this help
   q                   quit"""

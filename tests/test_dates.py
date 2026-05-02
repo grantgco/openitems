@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from openitems.domain.dates import DateParseError, parse, parse_strict
+from openitems.domain.dates import DateParseError, parse, parse_since, parse_strict
 
 
 def test_parse_empty_returns_none():
@@ -22,6 +22,60 @@ def test_parse_iso():
 def test_parse_natural():
     out = parse("June 1 2026")
     assert out == date(2026, 6, 1)
+
+
+def test_parse_since_today():
+    today = date(2026, 5, 6)  # Wednesday
+    assert parse_since("today", today=today) == today
+
+
+def test_parse_since_yesterday():
+    today = date(2026, 5, 6)
+    assert parse_since("yesterday", today=today) == date(2026, 5, 5)
+
+
+def test_parse_since_monday_returns_start_of_week():
+    today = date(2026, 5, 6)  # Wed → Monday is 2026-05-04
+    assert parse_since("monday", today=today) == date(2026, 5, 4)
+
+
+def test_parse_since_aliases_for_this_week():
+    today = date(2026, 5, 6)
+    monday = date(2026, 5, 4)
+    for alias in ("this-week", "this_week", "thisweek", "week"):
+        assert parse_since(alias, today=today) == monday
+
+
+def test_parse_since_last_week():
+    today = date(2026, 5, 6)
+    assert parse_since("last-week", today=today) == date(2026, 4, 27)
+
+
+def test_parse_since_last_7_days():
+    today = date(2026, 5, 6)
+    assert parse_since("last-7-days", today=today) == date(2026, 4, 29)
+
+
+def test_parse_since_iso_date():
+    today = date(2026, 5, 6)
+    assert parse_since("2026-04-15", today=today) == date(2026, 4, 15)
+
+
+def test_parse_since_relative():
+    today = date(2026, 5, 6)
+    out = parse_since("3 days ago", today=today)
+    assert out == date(2026, 5, 3)
+
+
+def test_parse_since_default_is_this_monday():
+    today = date(2026, 5, 6)
+    assert parse_since(None, today=today) == date(2026, 5, 4)
+    assert parse_since("", today=today) == date(2026, 5, 4)
+
+
+def test_parse_since_garbage_raises():
+    with pytest.raises(ValueError):
+        parse_since("not a date at all", today=date(2026, 5, 6))
 
 
 def test_parse_strict_distinguishes_empty_from_unparseable():

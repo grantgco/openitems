@@ -16,7 +16,10 @@ from openitems.config import Config
 from openitems.db.engine import session_scope
 from openitems.db.schema import init_schema
 from openitems.domain import engagements as engagements_mod
+from openitems.domain import notes as notes_mod
 from openitems.domain import tasks as tasks_mod
+from openitems.domain.dates import parse_since
+from openitems.export.digest import render_digest
 from openitems.export.workbook import export_engagement
 from openitems.paths import exports_dir
 
@@ -138,6 +141,72 @@ def export(
         console.print(f"[green]✓[/] exported [bold]{engagement.name}[/] → [cyan]{target}[/]")
         if open_after:
             _open_file(target)
+
+
+@app.command()
+def digest(
+    slug: Annotated[str, typer.Argument(help="Engagement slug.")],
+    since: Annotated[
+        str,
+        typer.Option(
+            "--since",
+            help=(
+                "Range start: 'today', 'yesterday', 'monday' (this Monday), "
+                "'last-week', 'last-7-days', '7 days ago', or YYYY-MM-DD. "
+                "Defaults to this Monday."
+            ),
+        ),
+    ] = "monday",
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", "-o", help="Output path (default: <exports>/<slug>-digest-YYYY-MM-DD.md)."),
+    ] = None,
+    open_after: Annotated[
+        bool,
+        typer.Option("--open/--no-open", help="Open the file after writing."),
+    ] = False,
+) -> None:
+    """Generate a Markdown handoff digest for a client engagement.
+
+    Produces a status summary intended for pasting into a client email
+    or Slack message: counts, completed-in-range, overdue, in-progress,
+    and a chronological activity feed of every note in the window.
+    """
+    init_schema()
+    today = date.today()
+    try:
+        since_date = parse_since(since, today=today)
+    except ValueError as exc:
+        console.print(f"[red]✗[/] {exc}")
+        raise typer.Exit(code=1) from None
+
+    with session_scope() as s:
+        engagement = engagements_mod.get_by_slug(s, slug)
+        if engagement is None:
+            console.print(f"[red]✗[/] no engagement with slug [bold]{slug}[/]")
+            raise typer.Exit(code=1)
+        all_tasks = tasks_mod.list_for(s, engagement, include_completed=True)
+        all_notes = notes_mod.list_for_engagement(s, engagement)
+        body = render_digest(
+            engagement,
+            all_tasks,
+            all_notes,
+            since=since_date,
+            until=today,
+            today=today,
+        )
+
+    target = out or (
+        exports_dir() / f"{slug}-digest-{today.strftime('%Y-%m-%d')}.md"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body)
+    console.print(
+        f"[green]✓[/] digest [bold]{slug}[/] [{since_date} → {today}] "
+        f"→ [cyan]{target}[/]"
+    )
+    if open_after:
+        _open_file(target)
 
 
 @app.command()

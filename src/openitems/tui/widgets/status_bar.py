@@ -27,6 +27,7 @@ class StatusBar(Static):
         ("u", "undo"),
         ("x", "export"),
         ("X", "quick-x"),
+        ("D", "digest"),
         ("E", "engagement"),
         ("?", "help"),
         ("q", "quit"),

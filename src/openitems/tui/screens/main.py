@@ -51,6 +51,7 @@ class MainScreen(Screen):
         Binding("u", "undo", "undo"),
         Binding("x", "export", "export"),
         Binding("X", "quick_export", "quick-export"),
+        Binding("D", "digest", "digest"),
         Binding("E", "switch_engagement", "engagement"),
         Binding("question_mark", "help", "help"),
         Binding("q", "quit", "quit"),
@@ -391,6 +392,56 @@ class MainScreen(Screen):
         out = quick_export(self._engagement_slug)
         if out is not None:
             self.app.notify(f"Exported → {out}")
+
+    def action_digest(self) -> None:
+        """Generate a Markdown handoff digest covering this week (Monday →
+        today) and write it next to the DB. Opens via the OS default app.
+        """
+        if not self._engagement_slug:
+            self.app.notify("Pick an engagement first (E).", severity="warning")
+            return
+        import subprocess
+        import sys
+
+        from openitems.domain import notes as notes_mod
+        from openitems.domain.dates import parse_since
+        from openitems.export.digest import render_digest
+        from openitems.paths import exports_dir
+
+        today = date.today()
+        since_date = parse_since("monday", today=today)
+        with session_scope() as s:
+            engagement = engagements.get_by_slug(s, self._engagement_slug)
+            if engagement is None:
+                self.app.notify("Engagement gone.", severity="error")
+                return
+            all_tasks = tasks.list_for(s, engagement, include_completed=True)
+            all_notes = notes_mod.list_for_engagement(s, engagement)
+            body = render_digest(
+                engagement,
+                all_tasks,
+                all_notes,
+                since=since_date,
+                until=today,
+                today=today,
+            )
+        target = (
+            exports_dir() / f"{self._engagement_slug}-digest-{today.strftime('%Y-%m-%d')}.md"
+        )
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body)
+        except OSError as exc:
+            self.app.notify(f"Couldn't write digest: {exc}", severity="error")
+            return
+        self.app.notify(f"Digest → {target}")
+        # Open in the OS default app (Markdown viewer / editor).
+        if sys.platform == "darwin":
+            subprocess.run(["open", str(target)], check=False)
+        elif sys.platform == "win32":  # pragma: no cover
+            subprocess.run(["start", "", str(target)], shell=True, check=False)
+        else:  # pragma: no cover
+            subprocess.run(["xdg-open", str(target)], check=False)
 
     def action_switch_engagement(self) -> None:
         from openitems.tui.screens.engagement_switcher import EngagementSwitcher
