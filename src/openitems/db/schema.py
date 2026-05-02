@@ -24,6 +24,7 @@ def _apply_lightweight_migrations() -> None:
     engine = get_engine()
     insp = inspect(engine)
     table_names = set(insp.get_table_names())
+
     if "bucket" in table_names:
         cols = {c["name"] for c in insp.get_columns("bucket")}
         if "is_done_state" not in cols:
@@ -34,6 +35,7 @@ def _apply_lightweight_migrations() -> None:
                         "BOOLEAN NOT NULL DEFAULT 0"
                     )
                 )
+
     if "task_note" in table_names:
         cols = {c["name"] for c in insp.get_columns("task_note")}
         if "kind" not in cols:
@@ -43,4 +45,33 @@ def _apply_lightweight_migrations() -> None:
                         "ALTER TABLE task_note ADD COLUMN kind "
                         "TEXT NOT NULL DEFAULT 'update'"
                     )
+                )
+
+    if "engagement" in table_names:
+        cols = {c["name"] for c in insp.get_columns("engagement")}
+        if "is_inbox" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE engagement ADD COLUMN is_inbox "
+                        "BOOLEAN NOT NULL DEFAULT 0"
+                    )
+                )
+        if "homepage_url" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE engagement ADD COLUMN homepage_url TEXT")
+                )
+
+    if "task" in table_names:
+        cols = {c["name"] for c in insp.get_columns("task")}
+        if "external_url" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE task ADD COLUMN external_url TEXT")
+                )
+        if "focus_week" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE task ADD COLUMN focus_week DATE")
                 )

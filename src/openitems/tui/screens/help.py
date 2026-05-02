@@ -16,6 +16,7 @@ _HELP = """[b]navigation[/b]
   a                   new task
   e or enter          edit selected task
   n                   add note to selected task
+  i                   jot — brain-dump into Inbox
   L                   activity log (all notes, this engagement)
   d                   soft-delete
   u                   undo last delete

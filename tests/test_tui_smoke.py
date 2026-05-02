@@ -276,6 +276,7 @@ async def test_modals_have_scrollable_container(app_environment):
     from openitems.tui.screens.engagement_switcher import EngagementSwitcher
     from openitems.tui.screens.export_wizard import ExportWizardScreen
     from openitems.tui.screens.help import HelpScreen
+    from openitems.tui.screens.jot import JotScreen
     from openitems.tui.screens.new_task import NewTaskScreen
     from openitems.tui.screens.quick_note import QuickNoteScreen
     from openitems.tui.screens.task_detail import TaskDetailScreen
@@ -297,6 +298,7 @@ async def test_modals_have_scrollable_container(app_environment):
         ("EngagementSwitcher", lambda: EngagementSwitcher()),
         ("HelpScreen", lambda: HelpScreen()),
         ("ActivityLogScreen", lambda: ActivityLogScreen(slug)),
+        ("JotScreen", lambda: JotScreen()),
     ]
 
     app = OpenItemsApp()
@@ -374,6 +376,37 @@ async def test_D_keybind_writes_digest_file(app_environment, monkeypatch):
     body = files[0].read_text()
     assert body.startswith("# Acme Co"), body[:80]
     assert "**Status:**" in body
+
+
+@pytest.mark.asyncio
+async def test_i_keybind_jots_to_inbox(app_environment):
+    """Pressing i opens the JotScreen; submitting drops a task into Inbox."""
+    from sqlalchemy import select
+
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Engagement, Task
+    from openitems.tui.app import OpenItemsApp
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("i")
+        await pilot.pause()
+        assert app.screen.__class__.__name__ == "JotScreen"
+        app.screen.body_input.value = "stranger pitched a distributed-systems idea"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        assert app.screen.__class__.__name__ == "MainScreen"
+
+    with session_scope() as s:
+        inbox = s.scalars(select(Engagement).where(Engagement.is_inbox.is_(True))).first()
+        assert inbox is not None
+        inbox_tasks = s.scalars(
+            select(Task).where(Task.engagement_id == inbox.id)
+        ).all()
+        assert [t.name for t in inbox_tasks] == [
+            "stranger pitched a distributed-systems idea"
+        ]
 
 
 @pytest.mark.asyncio

@@ -41,6 +41,7 @@ class MainScreen(Screen):
         Binding("a", "new_task", "add"),
         Binding("e,enter", "edit_task", "edit"),
         Binding("n", "add_note", "note"),
+        Binding("i", "jot", "jot"),
         Binding("L", "activity_log", "log"),
         Binding("d", "delete_task", "delete"),
         Binding("s", "advance_bucket", "advance"),
@@ -295,6 +296,17 @@ class MainScreen(Screen):
                 self._reload_active_engagement()
 
         self.app.push_screen(QuickNoteScreen(task_id), _after)
+
+    def action_jot(self) -> None:
+        """Brain-dump a task into the Inbox engagement without switching to it."""
+        from openitems.tui.screens.jot import JotScreen
+
+        def _after(result: bool) -> None:
+            if result and self._engagement_slug == "inbox":
+                # If the user is already viewing the inbox, refresh.
+                self._reload_active_engagement()
+
+        self.app.push_screen(JotScreen(), _after)
 
     def action_activity_log(self) -> None:
         if not self._engagement_slug:

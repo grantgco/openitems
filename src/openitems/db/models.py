@@ -27,6 +27,8 @@ class Engagement(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_inbox: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    homepage_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     buckets: Mapped[list[Bucket]] = relationship(
         back_populates="engagement", cascade="all, delete-orphan"
@@ -71,6 +73,8 @@ class Task(Base):
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     labels: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     external_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    external_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    focus_week: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False

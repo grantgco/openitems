@@ -38,6 +38,27 @@ def test_engagement_create_seeds_default_workflow(session):
     e = _engagement(session)
     names = [b.name for b in buckets.list_for(session, e)]
     assert names == ["Backlog", "In Progress", "In Review", "Done"]
+
+
+def test_ensure_inbox_creates_once(session):
+    inbox1 = engagements.ensure_inbox(session)
+    inbox2 = engagements.ensure_inbox(session)
+    assert inbox1.id == inbox2.id
+    assert inbox1.is_inbox is True
+
+
+def test_list_clients_excludes_inbox(session):
+    a = engagements.create(session, "Acme")
+    inbox = engagements.ensure_inbox(session)
+    clients = engagements.list_clients(session)
+    assert a in clients
+    assert inbox not in clients
+    # But list_active still returns both.
+    assert inbox in engagements.list_active(session)
+
+
+def test_default_workflow_done_bucket_is_done_state(session):
+    e = _engagement(session)
     done = next(b for b in buckets.list_for(session, e) if b.name == "Done")
     assert done.is_done_state is True
 

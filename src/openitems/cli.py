@@ -51,6 +51,34 @@ def migrate() -> None:
 
 
 @app.command()
+def jot(
+    body: Annotated[
+        list[str],
+        typer.Argument(help="The thought. Multiple words allowed (joined with spaces)."),
+    ],
+) -> None:
+    """Drop a one-line thought into the Inbox engagement.
+
+    Frictionless capture for thoughts that don't have a client home yet.
+    Triage later via the TUI: `openitems` → switch to Inbox (E → Inbox)
+    → use `M` to move tasks to the right client engagement.
+    """
+    init_schema()
+    text_body = " ".join(body).strip()
+    if not text_body:
+        console.print("[red]✗[/] empty thought")
+        raise typer.Exit(code=1)
+    with session_scope() as s:
+        inbox = engagements_mod.ensure_inbox(s)
+        try:
+            tasks_mod.create(s, inbox, tasks_mod.TaskInput(name=text_body))
+        except ValueError as exc:
+            console.print(f"[red]✗[/] {exc}")
+            raise typer.Exit(code=1) from None
+    console.print(f"[green]✓[/] → Inbox  ·  [cyan]{text_body}[/]")
+
+
+@app.command()
 def doctor() -> None:
     """Show resolved file paths — DB, config, exports — and which override won.
 
