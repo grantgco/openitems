@@ -208,6 +208,9 @@ def update(session: Session, task: Task, **changes: object) -> Task:
         task.bucket = (
             session.get(Bucket, new_bucket_id) if new_bucket_id else None
         )
+    if "external_url" in changes:
+        raw = changes["external_url"]
+        task.external_url = (str(raw).strip() or None) if raw else None
     _sync_status_with_bucket(task)
     return task
 

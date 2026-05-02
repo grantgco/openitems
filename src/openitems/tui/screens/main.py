@@ -59,6 +59,8 @@ class MainScreen(Screen):
         Binding("X", "quick_export", "quick-export"),
         Binding("D", "digest", "digest"),
         Binding("E", "switch_engagement", "engagement"),
+        Binding("o", "open_engagement_url", "open ↗"),
+        Binding("O", "open_task_url", "open task ↗"),
         Binding("question_mark", "help", "help"),
         Binding("q", "quit", "quit"),
         *[Binding(str(n), f"jump_bucket({n})", show=False) for n in range(1, 10)],
@@ -161,7 +163,9 @@ class MainScreen(Screen):
                     tag_counts[label] += 1
 
             done, total = progress_summary(all_tasks)
-            self.titlebar.set_engagement(engagement.name)
+            self.titlebar.set_engagement(
+                engagement.name, has_url=bool(engagement.homepage_url)
+            )
             self.titlebar.set_counts(
                 open_count=len(open_tasks),
                 overdue=overdue_count(open_tasks, today),
@@ -530,6 +534,44 @@ class MainScreen(Screen):
             subprocess.run(["start", "", str(target)], shell=True, check=False)
         else:  # pragma: no cover
             subprocess.run(["xdg-open", str(target)], check=False)
+
+    def action_open_engagement_url(self) -> None:
+        """Open the active engagement's homepage_url in the system browser."""
+        import webbrowser
+
+        if not self._engagement_slug:
+            self.app.notify("Pick an engagement first (E).", severity="warning")
+            return
+        with session_scope() as s:
+            e = engagements.get_by_slug(s, self._engagement_slug)
+            url = e.homepage_url if e else None
+        if not url:
+            self.app.notify(
+                "No URL set. Press E, highlight the engagement, fill the URL field.",
+                severity="warning",
+            )
+            return
+        webbrowser.open(url)
+        self.app.notify(f"↗ {url}")
+
+    def action_open_task_url(self) -> None:
+        """Open the selected task's external_url in the system browser."""
+        import webbrowser
+
+        task_id = self._selected_task_id()
+        if not task_id:
+            return
+        with session_scope() as s:
+            task = s.get(Task, task_id)
+            url = task.external_url if task else None
+        if not url:
+            self.app.notify(
+                "No URL on this task. Press e to set one.",
+                severity="warning",
+            )
+            return
+        webbrowser.open(url)
+        self.app.notify(f"↗ {url}")
 
     def action_switch_engagement(self) -> None:
         from openitems.tui.screens.engagement_switcher import EngagementSwitcher

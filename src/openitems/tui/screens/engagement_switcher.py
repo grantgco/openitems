@@ -23,28 +23,72 @@ class EngagementSwitcher(ModalScreen[str | None]):
     def __init__(self) -> None:
         super().__init__()
         self._option_list = OptionList(id="engagement-options")
-        self._new_input = Input(placeholder="…or type a name and press Enter to create", id="new-engagement-input")
+        self._new_input = Input(
+            placeholder="…or type a name and press Enter to create",
+            id="new-engagement-input",
+        )
+        self._url_input = Input(
+            placeholder="↗ URL for highlighted engagement (Tab to edit, Enter to save)",
+            id="engagement-url-input",
+        )
+        # Tracks which engagement slug the URL input currently corresponds to,
+        # so we know which row to update when Enter is pressed.
+        self._url_for_slug: str | None = None
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes="modal"):
             yield Label("[b]engagements[/b]", classes="modal-title")
             yield self._option_list
-            yield Label("[dim]press enter to switch · type to create new[/dim]", classes="dim")
+            yield Label(
+                "[dim]press enter to switch · type below to create new[/dim]",
+                classes="dim",
+            )
             yield self._new_input
+            yield self._url_input
 
     def on_mount(self) -> None:
+        self._refresh_options()
+        self._option_list.focus()
+
+    def _refresh_options(self, *, select_slug: str | None = None) -> None:
         with session_scope() as s:
             rows = engagements.list_active(s)
         opts: list[Option] = []
         for e in rows:
             text = Text()
+            badge = "📥 " if e.is_inbox else ""
+            text.append(badge, style="dim")
             text.append(e.name, style="bold")
             text.append(f"   {e.slug}", style="dim")
+            if e.homepage_url:
+                text.append("   ↗", style="dim")
             opts.append(Option(text, id=e.slug))
         if not opts:
-            opts.append(Option(Text("(no engagements yet — type below to create)", style="dim"), disabled=True))
+            opts.append(
+                Option(
+                    Text("(no engagements yet — type below to create)", style="dim"),
+                    disabled=True,
+                )
+            )
+        self._option_list.clear_options()
         self._option_list.add_options(opts)
-        self._option_list.focus()
+        if select_slug is not None:
+            for idx, opt in enumerate(opts):
+                if opt.id == select_slug:
+                    self._option_list.highlighted = idx
+                    break
+
+    @on(OptionList.OptionHighlighted)
+    def _on_highlight(self, event: OptionList.OptionHighlighted) -> None:
+        slug = event.option.id if event.option else None
+        if not slug:
+            self._url_for_slug = None
+            self._url_input.value = ""
+            return
+        self._url_for_slug = slug
+        with session_scope() as s:
+            e = engagements.get_by_slug(s, slug)
+            self._url_input.value = (e.homepage_url or "") if e else ""
 
     @on(OptionList.OptionSelected)
     def _on_select(self, event: OptionList.OptionSelected) -> None:
@@ -62,6 +106,24 @@ class EngagementSwitcher(ModalScreen[str | None]):
             slug = e.slug
         self._activate(slug)
 
+    @on(Input.Submitted, "#engagement-url-input")
+    def _on_url_save(self, event: Input.Submitted) -> None:
+        if not self._url_for_slug:
+            self.app.notify("Highlight an engagement first.", severity="warning")
+            return
+        url = event.value.strip() or None
+        with session_scope() as s:
+            e = engagements.get_by_slug(s, self._url_for_slug)
+            if e is None:
+                self.app.notify("Engagement gone.", severity="error")
+                return
+            e.homepage_url = url
+        self._refresh_options(select_slug=self._url_for_slug)
+        self.app.notify(
+            f"↗ saved" if url else "↗ cleared",
+        )
+        self._option_list.focus()
+
     def _activate(self, slug: str) -> None:
         cfg = Config.load()
         cfg.active_engagement = slug
@@ -74,6 +136,8 @@ class EngagementSwitcher(ModalScreen[str | None]):
     def action_submit(self) -> None:
         if self._new_input.has_focus:
             self._on_create(Input.Submitted(self._new_input, self._new_input.value))
+        elif self._url_input.has_focus:
+            self._on_url_save(Input.Submitted(self._url_input, self._url_input.value))
         else:
             highlighted = self._option_list.highlighted
             if highlighted is not None:

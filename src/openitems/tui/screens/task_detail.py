@@ -45,6 +45,10 @@ class TaskDetailScreen(ModalScreen[bool]):
         self.start_input = Input(id="task-start", placeholder="Start — e.g. today")
         self.due_input = Input(id="task-due", placeholder="Due — e.g. 2026-06-01")
         self.labels_input = Input(id="task-labels")
+        self.external_url_input = Input(
+            id="task-url",
+            placeholder="↗ external URL (ClientBase, JIRA, GitHub, …)",
+        )
         self.desc_input = TextArea("", id="task-desc", show_line_numbers=False)
         self.desc_input.styles.height = 6
         self.checklist_input = Input(placeholder="Add checklist item, press Enter", id="checklist-add")
@@ -78,6 +82,8 @@ class TaskDetailScreen(ModalScreen[bool]):
             yield self.due_input
             yield Label("Tags", classes="dim")
             yield self.labels_input
+            yield Label("External URL  (O on main screen opens it)", classes="dim")
+            yield self.external_url_input
             yield Label("Description", classes="dim")
             yield self.desc_input
             yield Label("Checklist  (space toggles selected, del removes)", classes="dim")
@@ -110,6 +116,7 @@ class TaskDetailScreen(ModalScreen[bool]):
             self.start_input.value = task.start_date.strftime("%Y-%m-%d") if task.start_date else ""
             self.due_input.value = task.due_date.strftime("%Y-%m-%d") if task.due_date else ""
             self.labels_input.value = task.labels
+            self.external_url_input.value = task.external_url or ""
             self.desc_input.text = task.description
             self._refresh_checklist(task)
             self._refresh_notes(task)
@@ -227,6 +234,7 @@ class TaskDetailScreen(ModalScreen[bool]):
                     due_date=due_date,
                     labels=", ".join(parse_labels(self.labels_input.value)),
                     bucket_id=bucket_id,
+                    external_url=self.external_url_input.value,
                 )
                 if pending_note:
                     notes.add(s, task, pending_note, kind=pending_note_kind)

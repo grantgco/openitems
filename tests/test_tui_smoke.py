@@ -439,6 +439,56 @@ async def test_f_toggles_focus_and_persists_planning_marker(app_environment):
 
 
 @pytest.mark.asyncio
+async def test_o_opens_engagement_url(app_environment, monkeypatch):
+    """o opens active engagement's homepage_url via webbrowser."""
+    from sqlalchemy import select
+
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Engagement
+    from openitems.tui.app import OpenItemsApp
+
+    with session_scope() as s:
+        e = s.scalars(select(Engagement)).first()
+        e.homepage_url = "https://example.com/clients/acme"
+
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("o")
+        await pilot.pause()
+
+    assert opened == ["https://example.com/clients/acme"]
+
+
+@pytest.mark.asyncio
+async def test_O_opens_task_url(app_environment, monkeypatch):
+    """O opens selected task's external_url via webbrowser."""
+    from sqlalchemy import select
+
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Task
+    from openitems.tui.app import OpenItemsApp
+
+    with session_scope() as s:
+        t = s.scalars(select(Task)).first()
+        t.external_url = "https://github.com/example/issues/42"
+
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("O")
+        await pilot.pause()
+
+    assert opened == ["https://github.com/example/issues/42"]
+
+
+@pytest.mark.asyncio
 async def test_help_modal_opens_and_closes(app_environment):
     from openitems.tui.app import OpenItemsApp
 

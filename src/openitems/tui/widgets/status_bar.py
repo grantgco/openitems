@@ -32,6 +32,7 @@ class StatusBar(Static):
         ("X", "quick-x"),
         ("D", "digest"),
         ("E", "engagement"),
+        ("o/O", "open ↗"),
         ("?", "help"),
         ("q", "quit"),
     ]

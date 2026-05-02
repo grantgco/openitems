@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from urllib.parse import urlparse
 
 import humanize
 from rich.console import Group
@@ -67,6 +68,9 @@ class DetailPane(Vertical):
         rows.append(_field_text("tags", format_tags(task.labels) if task.labels else Text("—", style=palette.DIM)))
         rows.append(_field_text("priority", format_priority(task.priority)))
         rows.append(_field("assigned", task.assigned_to or "—"))
+        if task.external_url:
+            host = urlparse(task.external_url).netloc or task.external_url
+            rows.append(_field("link", f"↗ {host}"))
         rows.append(_field_text("start", format_date(task.start_date)))
 
         due_text = format_date(task.due_date)

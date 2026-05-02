@@ -31,8 +31,12 @@ class Titlebar(Horizontal):
         yield Static("  ·  ", classes="dim")
         yield self._counts_label
 
-    def set_engagement(self, name: str | None) -> None:
-        self._engagement_label.update(name or "[no engagement]")
+    def set_engagement(self, name: str | None, *, has_url: bool = False) -> None:
+        if name is None:
+            self._engagement_label.update("[no engagement]")
+            return
+        suffix = "  ↗" if has_url else ""
+        self._engagement_label.update(f"{name}{suffix}")
 
     def set_counts(
         self, *, open_count: int, overdue: int, high: int, done: int, total: int
