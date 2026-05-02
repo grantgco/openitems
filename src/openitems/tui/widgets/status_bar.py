@@ -18,6 +18,7 @@ class StatusBar(Static):
         ("a", "add"),
         ("e", "edit"),
         ("n", "note"),
+        ("L", "log"),
         ("d", "delete"),
         ("space", "check"),
         ("s", "advance"),

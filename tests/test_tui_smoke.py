@@ -272,6 +272,7 @@ async def test_modals_have_scrollable_container(app_environment):
     from textual.containers import VerticalScroll
 
     from openitems.tui.app import OpenItemsApp
+    from openitems.tui.screens.activity_log import ActivityLogScreen
     from openitems.tui.screens.engagement_switcher import EngagementSwitcher
     from openitems.tui.screens.export_wizard import ExportWizardScreen
     from openitems.tui.screens.help import HelpScreen
@@ -295,6 +296,7 @@ async def test_modals_have_scrollable_container(app_environment):
         ("ExportWizardScreen", lambda: ExportWizardScreen(slug)),
         ("EngagementSwitcher", lambda: EngagementSwitcher()),
         ("HelpScreen", lambda: HelpScreen()),
+        ("ActivityLogScreen", lambda: ActivityLogScreen(slug)),
     ]
 
     app = OpenItemsApp()
@@ -310,6 +312,37 @@ async def test_modals_have_scrollable_container(app_environment):
             )
             await pilot.press("escape")
             await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_L_keybind_opens_activity_log_with_notes(app_environment):
+    """Pressing L opens the cross-task activity log; a present note shows up."""
+    from sqlalchemy import select
+
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Task
+    from openitems.domain import notes
+    from openitems.tui.app import OpenItemsApp
+
+    # Seed a note so the log isn't empty.
+    with session_scope() as s:
+        task = s.scalars(select(Task)).first()
+        notes.add(s, task, "kicked off security review", kind="meeting")
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("L")
+        await pilot.pause()
+        assert app.screen.__class__.__name__ == "ActivityLogScreen"
+        screen = app.screen
+        # 1 note → 1 day-header + 1 row = 2 options
+        assert screen._option_list.option_count == 2
+        # Option IDs map back to task IDs in the lookup
+        assert len(screen._note_to_task) == 1
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen.__class__.__name__ == "MainScreen"
 
 
 @pytest.mark.asyncio

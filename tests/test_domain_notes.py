@@ -72,6 +72,40 @@ def test_glyph_falls_back_to_update():
     assert glyph_for("unknown") == glyph_for(DEFAULT_KIND)
 
 
+def test_list_for_engagement_spans_tasks_newest_first(session):
+    e = engagements.create(session, "Acme")
+    t1 = tasks.create(session, e, TaskInput(name="A"))
+    t2 = tasks.create(session, e, TaskInput(name="B"))
+    n1 = notes.add(session, t1, "first on A")
+    n2 = notes.add(session, t2, "first on B", kind="call")
+    n3 = notes.add(session, t1, "second on A", kind="email")
+    out = notes.list_for_engagement(session, e)
+    # Newest first across both tasks.
+    assert [n.id for n in out] == [n3.id, n2.id, n1.id]
+    # Eager-loaded task name is accessible without a fresh query.
+    assert {n.task.name for n in out} == {"A", "B"}
+
+
+def test_list_for_engagement_excludes_deleted_tasks(session):
+    e = engagements.create(session, "Acme")
+    t = tasks.create(session, e, TaskInput(name="zombie"))
+    notes.add(session, t, "ghost note")
+    tasks.soft_delete(session, t)
+    session.flush()
+    assert notes.list_for_engagement(session, e) == []
+
+
+def test_list_for_engagement_isolates_engagements(session):
+    a = engagements.create(session, "Acme")
+    b = engagements.create(session, "Beta")
+    ta = tasks.create(session, a, TaskInput(name="acme task"))
+    tb = tasks.create(session, b, TaskInput(name="beta task"))
+    notes.add(session, ta, "acme update")
+    notes.add(session, tb, "beta update")
+    out_a = notes.list_for_engagement(session, a)
+    assert [n.body for n in out_a] == ["acme update"]
+
+
 def test_notes_cascade_delete_with_task(session):
     t = _task(session)
     notes.add(session, t, "a")

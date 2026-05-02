@@ -41,6 +41,7 @@ class MainScreen(Screen):
         Binding("a", "new_task", "add"),
         Binding("e,enter", "edit_task", "edit"),
         Binding("n", "add_note", "note"),
+        Binding("L", "activity_log", "log"),
         Binding("d", "delete_task", "delete"),
         Binding("s", "advance_bucket", "advance"),
         Binding("p", "cycle_priority", "priority"),
@@ -293,6 +294,25 @@ class MainScreen(Screen):
                 self._reload_active_engagement()
 
         self.app.push_screen(QuickNoteScreen(task_id), _after)
+
+    def action_activity_log(self) -> None:
+        if not self._engagement_slug:
+            self.app.notify("Pick an engagement first (E).", severity="warning")
+            return
+        from openitems.tui.screens.activity_log import ActivityLogScreen
+        from openitems.tui.screens.task_detail import TaskDetailScreen
+
+        def _after(picked_task_id: str | None) -> None:
+            if not picked_task_id:
+                return
+            # User selected a note → open its parent task. Reload after.
+            def _after_detail(result: bool) -> None:
+                if result:
+                    self._reload_active_engagement()
+
+            self.app.push_screen(TaskDetailScreen(picked_task_id), _after_detail)
+
+        self.app.push_screen(ActivityLogScreen(self._engagement_slug), _after)
 
     def action_delete_task(self) -> None:
         task_id = self._selected_task_id()

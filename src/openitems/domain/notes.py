@@ -11,9 +11,10 @@ stays scannable.
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
-from openitems.db.models import Task, TaskNote
+from openitems.db.models import Engagement, Task, TaskNote
 
 NOTE_KINDS: tuple[str, ...] = (
     "update",
@@ -56,6 +57,25 @@ def add(
 
 def list_for(task: Task) -> list[TaskNote]:
     return sorted(task.notes, key=lambda n: n.created_at, reverse=True)
+
+
+def list_for_engagement(
+    session: Session, engagement: Engagement
+) -> list[TaskNote]:
+    """All notes across all non-deleted tasks in the engagement, newest first.
+
+    The parent ``task`` relationship is eager-loaded so callers can render
+    ``note.task.name`` without an additional query per row.
+    """
+    stmt = (
+        select(TaskNote)
+        .join(Task, Task.id == TaskNote.task_id)
+        .where(Task.engagement_id == engagement.id)
+        .where(Task.deleted_at.is_(None))
+        .options(selectinload(TaskNote.task))
+        .order_by(TaskNote.created_at.desc())
+    )
+    return list(session.scalars(stmt))
 
 
 def cycle_kind(current: str, *, direction: int = 1) -> str:
