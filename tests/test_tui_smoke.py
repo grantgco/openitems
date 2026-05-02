@@ -238,6 +238,78 @@ async def test_n_keybind_opens_quick_note_and_saves(app_environment):
 
 
 @pytest.mark.asyncio
+async def test_new_task_bucket_and_priority_both_visible(app_environment):
+    """Regression: bucket Input and priority Select share a Horizontal row.
+    Without Vertical(1fr) wrappers the first sibling consumed full width and
+    pushed the priority Select off-screen."""
+    from openitems.tui.app import OpenItemsApp
+    from openitems.tui.screens.new_task import NewTaskScreen
+
+    app = OpenItemsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.push_screen(NewTaskScreen(app_environment["slug"]))
+        await pilot.pause()
+        screen = app.screen
+        bucket_region = screen.bucket_input.region
+        priority_region = screen.priority_select.region
+        # Both must have non-trivial width (the bug had priority width=1).
+        assert bucket_region.width > 5, f"bucket too narrow: {bucket_region}"
+        assert priority_region.width > 5, f"priority too narrow: {priority_region}"
+        # And they must not overlap horizontally.
+        bucket_right = bucket_region.x + bucket_region.width
+        assert priority_region.x >= bucket_right - 1
+
+
+@pytest.mark.asyncio
+async def test_modals_have_scrollable_container(app_environment):
+    """Every ModalScreen body must be a VerticalScroll (not Vertical) so
+    content past max-height: 80% remains reachable. This guards against
+    silently-clipped Save buttons."""
+    from textual.containers import VerticalScroll
+
+    from openitems.tui.app import OpenItemsApp
+    from openitems.tui.screens.engagement_switcher import EngagementSwitcher
+    from openitems.tui.screens.export_wizard import ExportWizardScreen
+    from openitems.tui.screens.help import HelpScreen
+    from openitems.tui.screens.new_task import NewTaskScreen
+    from openitems.tui.screens.quick_note import QuickNoteScreen
+    from openitems.tui.screens.task_detail import TaskDetailScreen
+
+    from sqlalchemy import select
+
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Task
+
+    with session_scope() as s:
+        task_id = s.scalars(select(Task.id)).first()
+
+    slug = app_environment["slug"]
+    factories = [
+        ("NewTaskScreen", lambda: NewTaskScreen(slug)),
+        ("TaskDetailScreen", lambda: TaskDetailScreen(task_id)),
+        ("QuickNoteScreen", lambda: QuickNoteScreen(task_id)),
+        ("ExportWizardScreen", lambda: ExportWizardScreen(slug)),
+        ("EngagementSwitcher", lambda: EngagementSwitcher()),
+        ("HelpScreen", lambda: HelpScreen()),
+    ]
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for name, factory in factories:
+            await app.push_screen(factory())
+            await pilot.pause()
+            scrolls = list(app.screen.query(VerticalScroll))
+            assert scrolls, f"{name} has no VerticalScroll container"
+            assert any("modal" in s.classes for s in scrolls), (
+                f"{name} VerticalScroll missing 'modal' class"
+            )
+            await pilot.press("escape")
+            await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_help_modal_opens_and_closes(app_environment):
     from openitems.tui.app import OpenItemsApp
 

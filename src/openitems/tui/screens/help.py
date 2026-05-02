@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Label, Static
 
@@ -35,7 +35,7 @@ class HelpScreen(ModalScreen[None]):
     BINDINGS = [Binding("escape,question_mark,q", "dismiss", "close", show=False)]
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="modal"):
+        with VerticalScroll(classes="modal"):
             yield Label("[b]keymap[/b]", classes="modal-title")
             yield Static(_HELP)
 

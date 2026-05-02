@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from openitems.db.models import Bucket, Engagement, Task
 from openitems.domain.constants import PRIORITIES, STATUSES
@@ -58,7 +58,15 @@ def list_for(
     include_completed: bool = True,
     include_deleted: bool = False,
 ) -> list[Task]:
-    stmt = select(Task).where(Task.engagement_id == engagement.id)
+    stmt = (
+        select(Task)
+        .where(Task.engagement_id == engagement.id)
+        .options(
+            selectinload(Task.notes),
+            selectinload(Task.checklist_items),
+            selectinload(Task.bucket),
+        )
+    )
     if not include_deleted:
         stmt = stmt.where(Task.deleted_at.is_(None))
     stmt = stmt.order_by(Task.created_at.asc())

@@ -168,7 +168,7 @@ class MainScreen(Screen):
                 continue
             pane.set_class(pid == pane_id, "-focused")
         if pane_id == "bucket-pane":
-            self.bucket_pane._option_list.focus()
+            self.bucket_pane.focus_list()
         elif pane_id == "items-pane":
             self.items_pane.table.focus()
         elif pane_id == "detail-pane":

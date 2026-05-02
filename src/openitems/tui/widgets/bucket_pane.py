@@ -46,6 +46,11 @@ class BucketPane(Vertical):
         yield Label("[b]workflow[/b]")
         yield self._option_list
 
+    def focus_list(self) -> None:
+        """Move focus to the inner OptionList. Used by the parent screen
+        when cycling pane focus — keeps the OptionList private."""
+        self._option_list.focus()
+
     def populate(
         self,
         *,

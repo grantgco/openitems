@@ -4,7 +4,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, OptionList
 from textual.widgets.option_list import Option
@@ -26,7 +26,7 @@ class EngagementSwitcher(ModalScreen[str | None]):
         self._new_input = Input(placeholder="…or type a name and press Enter to create", id="new-engagement-input")
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="modal"):
+        with VerticalScroll(classes="modal"):
             yield Label("[b]engagements[/b]", classes="modal-title")
             yield self._option_list
             yield Label("[dim]press enter to switch · type to create new[/dim]", classes="dim")

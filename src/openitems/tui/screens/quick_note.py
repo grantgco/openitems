@@ -3,7 +3,7 @@ from __future__ import annotations
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, TextArea
 
@@ -33,7 +33,7 @@ class QuickNoteScreen(ModalScreen[bool]):
         self.body_input.styles.height = 8
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="modal"):
+        with VerticalScroll(classes="modal"):
             yield Label(f"[b]add note[/b]  ·  {self._task_name}", classes="modal-title")
             yield Label("Body  (^S to save, Esc to cancel)", classes="dim")
             yield self.body_input

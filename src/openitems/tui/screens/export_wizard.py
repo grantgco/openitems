@@ -6,7 +6,7 @@ from pathlib import Path
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, OptionList, Static
 from textual.widgets.option_list import Option
@@ -87,7 +87,7 @@ class ExportWizardScreen(ModalScreen[Path | None]):
         self.open_after = Checkbox("Open in Excel after save", value=self.prefs.open_after_save)
 
     def compose(self) -> ComposeResult:
-        with Vertical(classes="modal"):
+        with VerticalScroll(classes="modal"):
             yield Label("[b]export → .xlsx[/b]", classes="modal-title")
             yield self.body
             yield self.col_options
@@ -177,15 +177,26 @@ class ExportWizardScreen(ModalScreen[Path | None]):
             self._refresh_columns()
 
     def _finish(self) -> None:
-        target = Path(self.path_input.value).expanduser()
+        raw = self.path_input.value.strip()
+        if not raw:
+            self.app.notify("Output path is empty.", severity="warning")
+            return
+        target = Path(raw).expanduser()
+        if target.suffix.lower() != ".xlsx":
+            target = target.with_suffix(".xlsx")
+        target.parent.mkdir(parents=True, exist_ok=True)
         today = date.today()
-        with session_scope() as s:
-            e = engagements.get_by_slug(s, self.engagement_slug)
-            if e is None:
-                self.app.notify("Engagement gone.", severity="error")
-                return
-            all_tasks = tasks.list_for(s, e, include_completed=True)
-            export_engagement(e, all_tasks, target, today=today)
+        try:
+            with session_scope() as s:
+                e = engagements.get_by_slug(s, self.engagement_slug)
+                if e is None:
+                    self.app.notify("Engagement gone.", severity="error")
+                    return
+                all_tasks = tasks.list_for(s, e, include_completed=True)
+                export_engagement(e, all_tasks, target, today=today)
+        except (OSError, PermissionError) as exc:
+            self.app.notify(f"Couldn't write {target}: {exc}", severity="error")
+            return
 
         self.prefs = ExportPrefs(
             columns=list(self.columns),
