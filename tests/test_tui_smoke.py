@@ -273,6 +273,7 @@ async def test_modals_have_scrollable_container(app_environment):
 
     from openitems.tui.app import OpenItemsApp
     from openitems.tui.screens.activity_log import ActivityLogScreen
+    from openitems.tui.screens.engagement_picker import EngagementPickerScreen
     from openitems.tui.screens.engagement_switcher import EngagementSwitcher
     from openitems.tui.screens.export_wizard import ExportWizardScreen
     from openitems.tui.screens.help import HelpScreen
@@ -299,6 +300,7 @@ async def test_modals_have_scrollable_container(app_environment):
         ("HelpScreen", lambda: HelpScreen()),
         ("ActivityLogScreen", lambda: ActivityLogScreen(slug)),
         ("JotScreen", lambda: JotScreen()),
+        ("EngagementPickerScreen", lambda: EngagementPickerScreen()),
     ]
 
     app = OpenItemsApp()

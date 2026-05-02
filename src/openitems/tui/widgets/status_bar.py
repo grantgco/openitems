@@ -20,6 +20,7 @@ class StatusBar(Static):
         ("n", "note"),
         ("i", "jot"),
         ("L", "log"),
+        ("M", "move"),
         ("d", "delete"),
         ("space", "check"),
         ("s", "advance"),

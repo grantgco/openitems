@@ -127,6 +127,32 @@ def create(session: Session, engagement: Engagement, input: TaskInput) -> Task:
     return task
 
 
+def move_to_engagement(
+    session: Session, task: Task, target: Engagement
+) -> Task:
+    """Move ``task`` to ``target`` engagement, landing in target's Backlog.
+
+    Why Backlog: the task's existing ``bucket_id`` belongs to the source
+    engagement and is meaningless in the new one. Picking the first
+    workflow stage of the target ("Backlog" by seed convention) keeps the
+    task visible and lets the user advance it the usual way.
+
+    No-op when target is already the task's engagement.
+    """
+    from openitems.domain import buckets as buckets_mod
+
+    if task.engagement_id == target.id:
+        return task
+    target_buckets = buckets_mod.list_for(session, target)
+    landing = next(iter(target_buckets), None)
+    task.engagement_id = target.id
+    task.bucket_id = landing.id if landing else None
+    task.bucket = landing
+    _sync_status_with_bucket(task)
+    session.flush()
+    return task
+
+
 def update(session: Session, task: Task, **changes: object) -> Task:
     if "name" in changes:
         name = str(changes["name"]).strip()

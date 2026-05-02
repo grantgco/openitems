@@ -43,6 +43,7 @@ class MainScreen(Screen):
         Binding("n", "add_note", "note"),
         Binding("i", "jot", "jot"),
         Binding("L", "activity_log", "log"),
+        Binding("M", "move_task", "move"),
         Binding("d", "delete_task", "delete"),
         Binding("s", "advance_bucket", "advance"),
         Binding("p", "cycle_priority", "priority"),
@@ -296,6 +297,36 @@ class MainScreen(Screen):
                 self._reload_active_engagement()
 
         self.app.push_screen(QuickNoteScreen(task_id), _after)
+
+    def action_move_task(self) -> None:
+        """Move the selected task to a different engagement (lands in its Backlog)."""
+        task_id = self._selected_task_id()
+        if not task_id:
+            return
+        from openitems.tui.screens.engagement_picker import EngagementPickerScreen
+
+        def _after(slug: str | None) -> None:
+            if not slug:
+                return
+            with session_scope() as s:
+                task = s.get(Task, task_id)
+                target = engagements.get_by_slug(s, slug)
+                if task is None or target is None:
+                    return
+                if task.engagement_id == target.id:
+                    self.app.notify("Already in that engagement.", severity="warning")
+                    return
+                tasks.move_to_engagement(s, task, target)
+            self.app.notify(f"→ {slug}")
+            self._reload_active_engagement()
+
+        self.app.push_screen(
+            EngagementPickerScreen(
+                prompt="move to engagement",
+                exclude_slug=self._engagement_slug,
+            ),
+            _after,
+        )
 
     def action_jot(self) -> None:
         """Brain-dump a task into the Inbox engagement without switching to it."""

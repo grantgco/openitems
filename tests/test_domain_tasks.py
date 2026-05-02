@@ -63,6 +63,26 @@ def test_default_workflow_done_bucket_is_done_state(session):
     assert done.is_done_state is True
 
 
+def test_move_to_engagement_lands_in_backlog(session):
+    src = engagements.create(session, "Source")
+    dst = engagements.create(session, "Dest")
+    t = tasks.create(session, src, TaskInput(name="A", bucket_name="In Progress"))
+    assert t.bucket is not None and t.bucket.name == "In Progress"
+    tasks.move_to_engagement(session, t, dst)
+    assert t.engagement_id == dst.id
+    # Lands in dest's Backlog (first bucket of seeded workflow).
+    assert t.bucket is not None and t.bucket.name == "Backlog"
+    # Source bucket reference is severed.
+    assert t.bucket.engagement_id == dst.id
+
+
+def test_move_to_engagement_noop_for_same_target(session):
+    e = engagements.create(session, "Acme")
+    t = tasks.create(session, e, TaskInput(name="A", bucket_name="In Progress"))
+    same = tasks.move_to_engagement(session, t, e)
+    assert same.bucket is not None and same.bucket.name == "In Progress"
+
+
 def test_default_bucket_assigned_when_unspecified(session):
     e = _engagement(session)  # seeds default workflow
     t = tasks.create(session, e, TaskInput(name="A"))
