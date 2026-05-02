@@ -23,6 +23,7 @@ _HELP = """[b]navigation[/b]
   u                   undo last delete
   s                   advance task to next workflow stage
   p                   cycle priority
+  f                   toggle ★ "this week" focus on selected task
   space               toggle next checklist item
 
 [b]other[/b]

@@ -83,6 +83,34 @@ def test_move_to_engagement_noop_for_same_target(session):
     assert same.bucket is not None and same.bucket.name == "In Progress"
 
 
+def test_toggle_focus_stamps_then_clears(session):
+    from datetime import date
+
+    from openitems.domain.dates import start_of_week
+
+    e = _engagement(session)
+    t = tasks.create(session, e, TaskInput(name="A"))
+    today = date(2026, 5, 6)  # Wednesday
+    tasks.toggle_focus(session, t, today=today)
+    assert t.focus_week == start_of_week(today)
+    tasks.toggle_focus(session, t, today=today)
+    assert t.focus_week is None
+
+
+def test_focus_only_filter_keeps_only_this_weeks_tasks(session):
+    from datetime import date
+
+    from openitems.domain.search import TaskFilter, apply
+
+    e = _engagement(session)
+    t1 = tasks.create(session, e, TaskInput(name="this week"))
+    t2 = tasks.create(session, e, TaskInput(name="not focused"))
+    today = date(2026, 5, 6)
+    tasks.toggle_focus(session, t1, today=today)
+    out = apply(TaskFilter(focus_only=True, today=today), [t1, t2])
+    assert out == [t1]
+
+
 def test_default_bucket_assigned_when_unspecified(session):
     e = _engagement(session)  # seeds default workflow
     t = tasks.create(session, e, TaskInput(name="A"))

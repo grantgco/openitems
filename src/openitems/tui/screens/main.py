@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 from datetime import date
 
 from textual import on
@@ -10,10 +11,12 @@ from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import Input
 
+from openitems.config import Config
 from openitems.db.engine import session_scope
 from openitems.db.models import Task
 from openitems.domain import audit, buckets as buckets_mod, checklists, engagements, tasks
 from openitems.domain.constants import cycle_priority
+from openitems.domain.dates import start_of_week
 from openitems.domain.search import TaskFilter, apply
 from openitems.domain.tasks import (
     high_priority_count,
@@ -47,6 +50,7 @@ class MainScreen(Screen):
         Binding("d", "delete_task", "delete"),
         Binding("s", "advance_bucket", "advance"),
         Binding("p", "cycle_priority", "priority"),
+        Binding("f", "toggle_focus", "focus"),
         Binding("space", "toggle_check", "check"),
         Binding("slash", "focus_filter", "filter"),
         Binding("escape", "blur_filter", "leave filter", show=False, priority=True),
@@ -87,6 +91,32 @@ class MainScreen(Screen):
     def on_mount(self) -> None:
         self._reload_active_engagement()
         self._focus_pane("items-pane")
+        self._maybe_show_planning_banner()
+
+    def _maybe_show_planning_banner(self) -> None:
+        """F16: nudge the user to plan the week if it's Monday and they haven't.
+
+        Cleared once they press `f` on any task this week (which writes
+        config.last_planned_at).
+        """
+        today = date.today()
+        if today.weekday() != 0:  # Monday only
+            return
+        cfg = Config.load()
+        already_planned_this_week = False
+        if cfg.last_planned_at:
+            try:
+                last = date.fromisoformat(cfg.last_planned_at)
+                already_planned_this_week = last >= start_of_week(today)
+            except ValueError:
+                pass
+        if already_planned_this_week:
+            return
+        self.app.notify(
+            f"Week of {today.strftime('%b %-d')} — press f on tasks to mark them in focus this week.",
+            title="Plan the week",
+            timeout=10,
+        )
 
     # ── data loading ──────────────────────────────────────────────────
 
@@ -147,6 +177,7 @@ class MainScreen(Screen):
                 filter_states={
                     "overdue_only": self._filter.overdue_only,
                     "unassigned": self._filter.unassigned_only,
+                    "focus_only": self._filter.focus_only,
                 },
             )
             # Default visible set: hide done-state buckets unless the user
@@ -191,37 +222,31 @@ class MainScreen(Screen):
     @on(BucketPane.SelectionChanged)
     def _on_bucket_selection(self, event: BucketPane.SelectionChanged) -> None:
         sel = event.selection
+        # Persist toggle-state across selections, but reset bucket/tag scopes
+        # when picking a new scope.
         if sel.kind == "all":
-            self._filter = TaskFilter(
-                overdue_only=self._filter.overdue_only,
-                unassigned_only=self._filter.unassigned_only,
-            )
+            self._filter = replace(self._filter, bucket_name=None, tags=())
         elif sel.kind == "bucket":
-            self._filter = TaskFilter(
-                bucket_name=sel.value,
-                overdue_only=self._filter.overdue_only,
-                unassigned_only=self._filter.unassigned_only,
-            )
+            self._filter = replace(self._filter, bucket_name=sel.value, tags=())
         elif sel.kind == "tag":
-            self._filter = TaskFilter(
+            self._filter = replace(
+                self._filter,
+                bucket_name=None,
                 tags=(sel.value,) if sel.value else (),
-                overdue_only=self._filter.overdue_only,
-                unassigned_only=self._filter.unassigned_only,
             )
         elif sel.kind == "filter":
             if sel.value == "overdue_only":
-                self._filter = TaskFilter(
-                    bucket_name=self._filter.bucket_name,
-                    tags=self._filter.tags,
-                    overdue_only=not self._filter.overdue_only,
-                    unassigned_only=self._filter.unassigned_only,
+                self._filter = replace(
+                    self._filter, overdue_only=not self._filter.overdue_only
                 )
             elif sel.value == "unassigned":
-                self._filter = TaskFilter(
-                    bucket_name=self._filter.bucket_name,
-                    tags=self._filter.tags,
-                    overdue_only=self._filter.overdue_only,
+                self._filter = replace(
+                    self._filter,
                     unassigned_only=not self._filter.unassigned_only,
+                )
+            elif sel.value == "focus_only":
+                self._filter = replace(
+                    self._filter, focus_only=not self._filter.focus_only
                 )
         self._reload_active_engagement()
 
@@ -405,6 +430,26 @@ class MainScreen(Screen):
             tasks.update(s, task, priority=cycle_priority(task.priority))
         self._reload_active_engagement()
 
+    def action_toggle_focus(self) -> None:
+        """Toggle 'this week' focus on the selected task; refreshes the list."""
+        task_id = self._selected_task_id()
+        if not task_id:
+            return
+        today = date.today()
+        with session_scope() as s:
+            task = s.get(Task, task_id)
+            if task is None:
+                return
+            tasks.toggle_focus(s, task, today=today)
+            on = task.focus_week is not None
+        # F16: stamp the planning ritual so the Monday banner clears once
+        # the user has flagged anything this week.
+        cfg = Config.load()
+        cfg.last_planned_at = today.isoformat()
+        cfg.save()
+        self.app.notify("★ in focus this week" if on else "focus cleared")
+        self._reload_active_engagement()
+
     def action_toggle_check(self) -> None:
         task_id = self._selected_task_id()
         if not task_id:
@@ -512,21 +557,11 @@ class MainScreen(Screen):
             return
         if 1 <= idx <= len(self._bucket_names):
             target = self._bucket_names[idx - 1]
-            self._filter = TaskFilter(
-                bucket_name=target,
-                overdue_only=self._filter.overdue_only,
-                unassigned_only=self._filter.unassigned_only,
-            )
+            self._filter = replace(self._filter, bucket_name=target, tags=())
             self._reload_active_engagement()
             self._focus_pane("items-pane")
 
     @on(Input.Changed, "#filter-bar")
     def _on_filter_changed(self, event: Input.Changed) -> None:
-        self._filter = TaskFilter(
-            bucket_name=self._filter.bucket_name,
-            tags=self._filter.tags,
-            overdue_only=self._filter.overdue_only,
-            unassigned_only=self._filter.unassigned_only,
-            text=event.value,
-        )
+        self._filter = replace(self._filter, text=event.value)
         self._reload_active_engagement()

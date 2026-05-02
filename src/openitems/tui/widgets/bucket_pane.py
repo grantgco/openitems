@@ -60,7 +60,11 @@ class BucketPane(Vertical):
         tags: list[tuple[str, int]],
         filter_states: dict[str, bool] | None = None,
     ) -> None:
-        states = filter_states or {"overdue_only": False, "unassigned": False}
+        states = filter_states or {
+            "overdue_only": False,
+            "unassigned": False,
+            "focus_only": False,
+        }
         opts: list[Option] = []
         opts.append(self._all_option(total, done))
         opts.append(self._make_section("─ workflow ─"))
@@ -72,6 +76,9 @@ class BucketPane(Vertical):
         for name, count in tags:
             opts.append(self._make_tag(name, count))
         opts.append(self._make_section("─ filters ─"))
+        opts.append(
+            self._make_toggle("filter", "focus_only", "★ this week", states.get("focus_only", False))
+        )
         opts.append(
             self._make_toggle("filter", "overdue_only", "overdue only", states["overdue_only"])
         )

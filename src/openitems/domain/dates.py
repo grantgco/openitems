@@ -131,9 +131,14 @@ def parse_since(value: str | None, *, today: date | None = None) -> date:
     return parsed.date() if isinstance(parsed, datetime) else parsed
 
 
-def _start_of_week(d: date) -> date:
+def start_of_week(d: date) -> date:
     """Monday of the ISO week containing ``d``."""
     return d - timedelta(days=d.weekday())
+
+
+# Backwards-compatible private alias for the few internal call sites that
+# already imported the underscore-prefixed name.
+_start_of_week = start_of_week
 
 
 def relative(value: date | None, today: date | None = None) -> str:

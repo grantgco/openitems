@@ -12,6 +12,7 @@ from textual.widgets import Label, Static
 
 from openitems.db.models import Task
 from openitems.domain import notes as notes_mod
+from openitems.domain.dates import start_of_week
 from openitems.domain.tasks import completed_checks, is_late, total_checks
 from openitems.tui import palette
 from openitems.tui.widgets.task_format import format_date, format_priority, format_tags
@@ -51,7 +52,10 @@ class DetailPane(Vertical):
         today = today or date.today()
         late = is_late(task, today)
 
-        self._title.update(Text(task.name, style=f"bold {palette.ACCENT}"))
+        title_text = Text(task.name, style=f"bold {palette.ACCENT}")
+        if task.focus_week == start_of_week(today):
+            title_text.append("  ★ this week", style=f"bold {palette.ACCENT}")
+        self._title.update(title_text)
 
         rows: list[Text | Group] = []
         bucket_label = task.bucket.name if task.bucket else "—"

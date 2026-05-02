@@ -127,6 +127,25 @@ def create(session: Session, engagement: Engagement, input: TaskInput) -> Task:
     return task
 
 
+def toggle_focus(
+    session: Session, task: Task, *, today: date | None = None
+) -> Task:
+    """Stamp the task with the current week's Monday, or clear it.
+
+    Used by the F (focus) keybind to mark which tasks matter this week.
+    The "this week" filter (TaskFilter.focus_only) shows only tasks whose
+    ``focus_week`` equals the start of the current ISO week, so a stamp
+    expires automatically once the week rolls over.
+    """
+    from openitems.domain.dates import start_of_week
+
+    today = today or date.today()
+    monday = start_of_week(today)
+    task.focus_week = None if task.focus_week == monday else monday
+    session.flush()
+    return task
+
+
 def move_to_engagement(
     session: Session, task: Task, target: Engagement
 ) -> Task:

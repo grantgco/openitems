@@ -25,6 +25,7 @@ class StatusBar(Static):
         ("space", "check"),
         ("s", "advance"),
         ("p", "priority"),
+        ("f", "focus"),
         ("/", "filter"),
         ("u", "undo"),
         ("x", "export"),

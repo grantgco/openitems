@@ -9,6 +9,7 @@ from textual.message import Message
 from textual.widgets import DataTable, Label
 
 from openitems.db.models import Task
+from openitems.domain.dates import start_of_week
 from openitems.domain.tasks import is_late
 from openitems.tui import palette
 from openitems.tui.widgets.task_format import format_due, format_priority, format_tags
@@ -52,9 +53,12 @@ class ItemsPane(Vertical):
         self._today = today or date.today()
         self._tasks = list(tasks)
         self.table.clear()
+        monday = start_of_week(self._today)
         for idx, task in enumerate(self._tasks, start=1):
             note_count = len(task.notes)
             name_cell = Text(task.name, style=palette.FG)
+            if task.focus_week == monday:
+                name_cell.append(" ★", style=palette.ACCENT)
             if note_count:
                 name_cell.append(f"  ✎{note_count}", style=palette.DIM)
             self.table.add_row(

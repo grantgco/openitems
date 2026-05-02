@@ -7,6 +7,7 @@ from datetime import date
 from rapidfuzz import fuzz
 
 from openitems.db.models import Task
+from openitems.domain.dates import start_of_week
 from openitems.domain.tasks import is_late
 from openitems.domain.text import parse_labels
 
@@ -20,6 +21,7 @@ class TaskFilter:
     assignee: str | None = None
     overdue_only: bool = False
     unassigned_only: bool = False
+    focus_only: bool = False
     text: str = ""
     fuzzy_threshold: int = 60
     today: date | None = None
@@ -62,6 +64,9 @@ def apply(filter: TaskFilter, tasks: Iterable[Task]) -> list[Task]:
             continue
         if filter.unassigned_only and t.assigned_to.strip():
             continue
+        if filter.focus_only:
+            if t.focus_week is None or t.focus_week != start_of_week(today):
+                continue
         if filter.has_text and not _matches_text(t, filter.text, filter.fuzzy_threshold):
             continue
         out.append(t)

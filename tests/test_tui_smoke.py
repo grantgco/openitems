@@ -412,6 +412,33 @@ async def test_i_keybind_jots_to_inbox(app_environment):
 
 
 @pytest.mark.asyncio
+async def test_f_toggles_focus_and_persists_planning_marker(app_environment):
+    """Pressing f stamps focus_week + records last_planned_at in config."""
+    from datetime import date
+
+    from sqlalchemy import select
+
+    from openitems.config import Config
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Task
+    from openitems.domain.dates import start_of_week
+    from openitems.tui.app import OpenItemsApp
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("f")
+        await pilot.pause()
+
+    today = date.today()
+    with session_scope() as s:
+        task = s.scalars(select(Task)).first()
+        assert task.focus_week == start_of_week(today)
+    cfg = Config.load()
+    assert cfg.last_planned_at == today.isoformat()
+
+
+@pytest.mark.asyncio
 async def test_help_modal_opens_and_closes(app_environment):
     from openitems.tui.app import OpenItemsApp
 

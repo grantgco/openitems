@@ -34,6 +34,7 @@ class Config:
     active_engagement: str | None = None
     export_prefs: dict[str, ExportPrefs] = field(default_factory=dict)
     db_path: str | None = None
+    last_planned_at: str | None = None  # ISO date — last time user toggled focus
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:
@@ -47,6 +48,7 @@ class Config:
             active_engagement=data.get("active_engagement"),
             export_prefs=prefs,
             db_path=data.get("db_path"),
+            last_planned_at=data.get("last_planned_at"),
         )
 
     def save(self, path: Path | None = None) -> None:
@@ -57,6 +59,8 @@ class Config:
             payload["active_engagement"] = self.active_engagement
         if self.db_path is not None:
             payload["db_path"] = self.db_path
+        if self.last_planned_at is not None:
+            payload["last_planned_at"] = self.last_planned_at
         if self.export_prefs:
             payload["export_prefs"] = {
                 slug: asdict(prefs) for slug, prefs in self.export_prefs.items()
