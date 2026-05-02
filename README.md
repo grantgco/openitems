@@ -15,7 +15,7 @@ uv sync --extra dev
 uv tool install --editable .   # or `uv run openitems` from the project dir
 ```
 
-The SQLite DB lives at `~/Library/Application Support/openitems/openitems.db` on macOS.
+By default the SQLite DB lives at `~/openitems/openitems.db` — visible in Finder and easy to point a SQLite browser at. Run `openitems doctor` to see all resolved paths. Override with `OPENITEMS_DB=/some/path/foo.db openitems`, or set `db_path = "..."` in `~/.config/openitems/config.toml`.
 
 ## Quick start
 

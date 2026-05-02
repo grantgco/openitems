@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from datetime import date
@@ -10,13 +11,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from openitems import paths
 from openitems.config import Config
 from openitems.db.engine import session_scope
 from openitems.db.schema import init_schema
 from openitems.domain import engagements as engagements_mod
 from openitems.domain import tasks as tasks_mod
 from openitems.export.workbook import export_engagement
-from openitems.paths import db_path, exports_dir
+from openitems.paths import exports_dir
 
 app = typer.Typer(
     add_completion=False,
@@ -42,7 +44,40 @@ def _default(ctx: typer.Context) -> None:
 def migrate() -> None:
     """Create or update the local SQLite schema."""
     init_schema()
-    console.print(f"[green]✓[/] schema ready at [cyan]{db_path()}[/]")
+    console.print(f"[green]✓[/] schema ready at [cyan]{paths.db_path()}[/]")
+
+
+@app.command()
+def doctor() -> None:
+    """Show resolved file paths — DB, config, exports — and which override won.
+
+    Resolution order for the DB: ``OPENITEMS_DB`` env var → ``db_path`` in
+    config.toml → default ``~/openitems/openitems.db``.
+    """
+    db = paths.db_path()
+    cfg_path = paths.config_path()
+    exp = paths.exports_dir()
+
+    env_override = os.environ.get("OPENITEMS_DB")
+    cfg = Config.load() if cfg_path.exists() else Config()
+    if env_override:
+        source = "OPENITEMS_DB env var"
+    elif cfg.db_path:
+        source = f"config.toml ({cfg_path})"
+    else:
+        source = "default (~/openitems/)"
+
+    table = Table(show_header=False, box=None, pad_edge=False)
+    table.add_column(style="dim")
+    table.add_column()
+    table.add_row("DB", f"[cyan]{db}[/]")
+    table.add_row("DB source", source)
+    table.add_row("DB exists", "[green]yes[/]" if db.exists() else "[yellow]no (will be created on first run)[/]")
+    table.add_row("config", f"[cyan]{cfg_path}[/]")
+    table.add_row("config exists", "[green]yes[/]" if cfg_path.exists() else "[dim]no[/]")
+    table.add_row("exports dir", f"[cyan]{exp}[/]")
+    table.add_row("active engagement", cfg.active_engagement or "[dim](none)[/]")
+    console.print(table)
 
 
 @engagements_app.command("new")
@@ -79,7 +114,7 @@ def export(
     slug: Annotated[str, typer.Argument(help="Engagement slug (see `engagements list`).")],
     out: Annotated[
         Path | None,
-        typer.Option("--out", "-o", help="Output path (default: ~/Library/.../exports/<slug>-YYYY-MM-DD.xlsx)."),
+        typer.Option("--out", "-o", help="Output path (default: <exports-dir>/<slug>-YYYY-MM-DD.xlsx — see `openitems doctor`)."),
     ] = None,
     open_after: Annotated[
         bool,

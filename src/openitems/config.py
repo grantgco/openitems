@@ -33,6 +33,7 @@ class ExportPrefs:
 class Config:
     active_engagement: str | None = None
     export_prefs: dict[str, ExportPrefs] = field(default_factory=dict)
+    db_path: str | None = None
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:
@@ -45,6 +46,7 @@ class Config:
         return cls(
             active_engagement=data.get("active_engagement"),
             export_prefs=prefs,
+            db_path=data.get("db_path"),
         )
 
     def save(self, path: Path | None = None) -> None:
@@ -53,6 +55,8 @@ class Config:
         payload: dict[str, Any] = {}
         if self.active_engagement is not None:
             payload["active_engagement"] = self.active_engagement
+        if self.db_path is not None:
+            payload["db_path"] = self.db_path
         if self.export_prefs:
             payload["export_prefs"] = {
                 slug: asdict(prefs) for slug, prefs in self.export_prefs.items()

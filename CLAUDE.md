@@ -59,7 +59,7 @@ We use `Base.metadata.create_all` plus a tiny additive migration block in `db/sc
 ### Run / develop
 - `uv run pytest` — full suite (~30 tests, ~1.5s)
 - `uv run ruff check src tests` — lint must pass; project ignores `E501`, `N806` (SQLAlchemy `SessionLocal` convention), `RUF002/003/012`
-- `uv run openitems` — launch TUI against the real DB (`~/Library/Application Support/openitems/openitems.db`)
+- `uv run openitems` — launch TUI against the real DB (default `~/openitems/openitems.db`; override via `OPENITEMS_DB` env var or `db_path` in `config.toml`; run `openitems doctor` to see resolved paths)
 - `uv run textual run --dev openitems.tui.app:OpenItemsApp` — TUI with the dev console
 
 ### Typical change patterns
