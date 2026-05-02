@@ -362,9 +362,14 @@ class MainScreen(Screen):
         from openitems.tui.screens.jot import JotScreen
 
         def _after(result: bool) -> None:
-            if result and self._engagement_slug == "inbox":
-                # If the user is already viewing the inbox, refresh.
-                self._reload_active_engagement()
+            if not result:
+                return
+            # Always reload — cheap, and avoids fragile slug comparisons.
+            # (The inbox slug isn't always literally "inbox": if the user
+            # already had an engagement named Inbox, ensure_inbox lands
+            # on "inbox-2" or similar, since `is_inbox` is the source of
+            # truth, not slug.)
+            self._reload_active_engagement()
 
         self.app.push_screen(JotScreen(), _after)
 
@@ -579,6 +584,11 @@ class MainScreen(Screen):
         def _after(slug: str | None) -> None:
             if slug:
                 self.set_engagement(slug)
+            else:
+                # The switcher also edits engagement URLs in-place; even
+                # without a slug change we must reload so the titlebar's
+                # ↗ glyph reflects any URL the user just saved/cleared.
+                self._reload_active_engagement()
 
         self.app.push_screen(EngagementSwitcher(), _after)
 

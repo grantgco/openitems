@@ -12,6 +12,7 @@ from textual.widgets.option_list import Option
 from openitems.config import Config
 from openitems.db.engine import session_scope
 from openitems.domain import engagements
+from openitems.domain.text import normalize_url
 
 
 class EngagementSwitcher(ModalScreen[str | None]):
@@ -49,6 +50,23 @@ class EngagementSwitcher(ModalScreen[str | None]):
     def on_mount(self) -> None:
         self._refresh_options()
         self._option_list.focus()
+        # Force-prime the highlighted row so the URL field knows which
+        # engagement it's editing without requiring the user to press j/k
+        # first. (OptionList doesn't fire OptionHighlighted on initial
+        # mount — only on user navigation.)
+        if self._option_list.option_count > 0:
+            for idx in range(self._option_list.option_count):
+                opt = self._option_list.get_option_at_index(idx)
+                if opt.id and not opt.disabled:
+                    self._option_list.highlighted = idx
+                    self._sync_url_field_to(opt.id)
+                    break
+
+    def _sync_url_field_to(self, slug: str) -> None:
+        self._url_for_slug = slug
+        with session_scope() as s:
+            e = engagements.get_by_slug(s, slug)
+            self._url_input.value = (e.homepage_url or "") if e else ""
 
     def _refresh_options(self, *, select_slug: str | None = None) -> None:
         with session_scope() as s:
@@ -85,10 +103,7 @@ class EngagementSwitcher(ModalScreen[str | None]):
             self._url_for_slug = None
             self._url_input.value = ""
             return
-        self._url_for_slug = slug
-        with session_scope() as s:
-            e = engagements.get_by_slug(s, slug)
-            self._url_input.value = (e.homepage_url or "") if e else ""
+        self._sync_url_field_to(slug)
 
     @on(OptionList.OptionSelected)
     def _on_select(self, event: OptionList.OptionSelected) -> None:
@@ -111,7 +126,7 @@ class EngagementSwitcher(ModalScreen[str | None]):
         if not self._url_for_slug:
             self.app.notify("Highlight an engagement first.", severity="warning")
             return
-        url = event.value.strip() or None
+        url = normalize_url(event.value)
         with session_scope() as s:
             e = engagements.get_by_slug(s, self._url_for_slug)
             if e is None:
@@ -119,9 +134,10 @@ class EngagementSwitcher(ModalScreen[str | None]):
                 return
             e.homepage_url = url
         self._refresh_options(select_slug=self._url_for_slug)
-        self.app.notify(
-            f"↗ saved" if url else "↗ cleared",
-        )
+        # Reflect any prepended scheme back into the field so the user
+        # sees what was actually saved.
+        self._url_input.value = url or ""
+        self.app.notify("↗ saved" if url else "↗ cleared")
         self._option_list.focus()
 
     def _activate(self, slug: str) -> None:

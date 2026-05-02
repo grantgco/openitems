@@ -209,8 +209,10 @@ def update(session: Session, task: Task, **changes: object) -> Task:
             session.get(Bucket, new_bucket_id) if new_bucket_id else None
         )
     if "external_url" in changes:
+        from openitems.domain.text import normalize_url
+
         raw = changes["external_url"]
-        task.external_url = (str(raw).strip() or None) if raw else None
+        task.external_url = normalize_url(str(raw) if raw is not None else None)
     _sync_status_with_bucket(task)
     return task
 

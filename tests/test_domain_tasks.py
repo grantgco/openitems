@@ -57,6 +57,22 @@ def test_list_clients_excludes_inbox(session):
     assert inbox in engagements.list_active(session)
 
 
+def test_ensure_inbox_handles_pre_existing_name_collision(session):
+    """If a regular engagement called 'Inbox' exists first, ensure_inbox
+    creates a separate is_inbox=True engagement (with a non-colliding slug)
+    rather than promoting the existing one.
+
+    The is_inbox flag — not the slug — is the source of truth.
+    """
+    pre = engagements.create(session, "Inbox")
+    assert pre.slug == "inbox"
+    assert pre.is_inbox is False
+    inbox = engagements.ensure_inbox(session)
+    assert inbox.id != pre.id
+    assert inbox.slug != pre.slug  # auto-bumped (e.g. "inbox-2")
+    assert inbox.is_inbox is True
+
+
 def test_default_workflow_done_bucket_is_done_state(session):
     e = _engagement(session)
     done = next(b for b in buckets.list_for(session, e) if b.name == "Done")

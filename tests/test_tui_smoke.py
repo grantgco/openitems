@@ -439,6 +439,26 @@ async def test_f_toggles_focus_and_persists_planning_marker(app_environment):
 
 
 @pytest.mark.asyncio
+async def test_engagement_switcher_primes_url_field_for_first_option(app_environment):
+    """On mount, the URL field should already point at the first engagement
+    so a user typing a URL immediately doesn't get 'highlight first' warning.
+    """
+    from openitems.tui.app import OpenItemsApp
+    from openitems.tui.screens.engagement_switcher import EngagementSwitcher
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(EngagementSwitcher())
+        for _ in range(3):
+            await pilot.pause()
+        screen = app.screen
+        assert screen._url_for_slug is not None, (
+            "URL field should be primed to first engagement on mount"
+        )
+
+
+@pytest.mark.asyncio
 async def test_o_opens_engagement_url(app_environment, monkeypatch):
     """o opens active engagement's homepage_url via webbrowser."""
     from sqlalchemy import select
@@ -486,6 +506,36 @@ async def test_O_opens_task_url(app_environment, monkeypatch):
         await pilot.pause()
 
     assert opened == ["https://github.com/example/issues/42"]
+
+
+@pytest.mark.asyncio
+async def test_task_detail_normalizes_schemeless_url_on_save(app_environment):
+    """Saving 'github.com/foo' on a task should persist 'https://github.com/foo',
+    so pressing O later opens it as a real URL instead of a file path.
+    """
+    from sqlalchemy import select
+
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Task
+    from openitems.tui.app import OpenItemsApp
+    from openitems.tui.screens.task_detail import TaskDetailScreen
+
+    with session_scope() as s:
+        task_id = s.scalars(select(Task.id)).first()
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.push_screen(TaskDetailScreen(task_id))
+        await pilot.pause()
+        screen = app.screen
+        screen.external_url_input.value = "github.com/example/issues/42"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+    with session_scope() as s:
+        task = s.get(Task, task_id)
+        assert task.external_url == "https://github.com/example/issues/42"
 
 
 @pytest.mark.asyncio

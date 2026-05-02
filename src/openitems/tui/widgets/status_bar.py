@@ -49,6 +49,3 @@ class StatusBar(Static):
             text.append(" ", style=palette.DIM)
             text.append(label, style=palette.DIM)
         return text
-
-    def refresh_text(self) -> None:
-        self.update(self._render_text())
