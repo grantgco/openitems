@@ -1,25 +1,25 @@
 /* Open Items TUI — global stylesheet
-   Tokens mirror Open Items TUI.html :10-36 */
+   Panic-inspired neon palette; tokens mirror tui/palette.py */
 
 Screen {
-  background: #1a1d22;
-  color: #d6d2c8;
+  background: #1b1729;
+  color: #e8e2f0;
 }
 
 #titlebar {
   height: 1;
-  background: #14171b;
-  color: #7a7468;
+  background: #14111e;
+  color: #8a7fa8;
   padding: 0 1;
 }
 
 #titlebar .titlebar-engagement {
-  color: #d6d2c8;
+  color: #5ee5e5;
   text-style: bold;
 }
 
 #titlebar .titlebar-counts {
-  color: #7a7468;
+  color: #8a7fa8;
 }
 
 #main-stage {
@@ -27,15 +27,15 @@ Screen {
 }
 
 .pane {
-  background: #1f2329;
-  border: round #3a3f47;
+  background: #251f38;
+  border: round #3d3155;
   padding: 0 1;
 }
 
 .pane:focus-within,
 .pane.-focused {
-  border: round #d6b35a;
-  background: #1f1d18;
+  border: round #ff8a3a;
+  background: #2a1f3d;
 }
 
 #bucket-pane {
@@ -60,8 +60,8 @@ ListView, OptionList {
 
 ListView > ListItem.--highlight,
 OptionList > .option-list--option-highlighted {
-  background: #2a2820;
-  color: #d6d2c8;
+  background: #2e1f4a;
+  color: #e8e2f0;
 }
 
 DataTable {
@@ -70,45 +70,45 @@ DataTable {
 }
 
 DataTable > .datatable--header {
-  background: #1f2329;
-  color: #7a7468;
-  text-style: none;
+  background: #251f38;
+  color: #5ee5e5;
+  text-style: bold;
 }
 
 DataTable > .datatable--cursor {
-  background: #2a2820;
-  color: #d6d2c8;
+  background: #2e1f4a;
+  color: #e8e2f0;
 }
 
 DataTable > .datatable--hover {
-  background: #232722;
+  background: #2a1f3d;
 }
 
 #status-bar {
   height: 1;
-  background: #14171b;
-  color: #7a7468;
+  background: #14111e;
+  color: #8a7fa8;
   padding: 0 1;
 }
 
 #status-bar .status-key {
-  color: #d6b35a;
+  color: #ff8a3a;
   text-style: bold;
 }
 
 #status-bar .status-sep {
-  color: #3a3f47;
+  color: #3d3155;
 }
 
 /* Modal screens */
 ModalScreen {
   align: center middle;
-  background: #1a1d22 60%;
+  background: #1b1729 60%;
 }
 
 .modal {
-  background: #1f2329;
-  border: round #d6b35a;
+  background: #251f38;
+  border: round #ff8a3a;
   padding: 1 2;
   width: 70;
   height: auto;
@@ -116,33 +116,33 @@ ModalScreen {
 }
 
 .modal .modal-title {
-  color: #d6b35a;
+  color: #5ee5e5;
   text-style: bold;
   padding-bottom: 1;
 }
 
 .modal Input,
 .modal TextArea {
-  background: #14171b;
-  color: #d6d2c8;
-  border: round #3a3f47;
+  background: #14111e;
+  color: #e8e2f0;
+  border: round #3d3155;
 }
 
 .modal Input:focus,
 .modal TextArea:focus {
-  border: round #d6b35a;
+  border: round #ff8a3a;
 }
 
 .modal Button {
-  background: #2a2f37;
-  color: #d6d2c8;
+  background: #2e1f4a;
+  color: #e8e2f0;
   border: none;
   margin: 0 1;
 }
 
 .modal Button.-primary {
-  background: #d6b35a;
-  color: #14171b;
+  background: #ff8a3a;
+  color: #14111e;
   text-style: bold;
 }
 
@@ -161,7 +161,7 @@ ModalScreen {
 }
 
 .modal Label.dim {
-  color: #7a7468;
+  color: #8a7fa8;
   padding: 0 0 0 1;
 }
 
@@ -178,40 +178,40 @@ ModalScreen {
 
 .field-label {
   width: 14;
-  color: #7a7468;
+  color: #8a7fa8;
 }
 
 .field-value {
-  color: #d6d2c8;
+  color: #e8e2f0;
 }
 
 .section-rule {
-  color: #7a7468;
+  color: #5ee5e5;
   margin-top: 1;
   text-style: italic;
 }
 
 .tag-badge {
-  background: #14171b;
-  color: #d6d2c8;
+  background: #14111e;
+  color: #ff7edb;
   padding: 0 1;
   margin: 0 1 0 0;
 }
 
 .priority-high {
-  color: #d57367;
+  color: #ff5277;
   text-style: bold;
 }
 
 .priority-low {
-  color: #7a7468;
+  color: #8a7fa8;
 }
 
 .overdue {
-  color: #d57367;
+  color: #ff5277;
   text-style: bold;
 }
 
 .dim {
-  color: #7a7468;
+  color: #8a7fa8;
 }
