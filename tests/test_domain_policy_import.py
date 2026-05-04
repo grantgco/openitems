@@ -126,12 +126,14 @@ def test_preview_unknown_columns_are_collected_not_errors(session):
     e = _engagement(session)
     lines = [
         "name,carrier,extra_thing,id,policy_number",
-        "Main GL,Travelers,whatever,deadbeef,GL-1",
+        # Blank id keeps this on the insert path; the round-trip behaviour
+        # of a populated id has its own dedicated test below.
+        "Main GL,Travelers,whatever,,GL-1",
     ]
     pre = policy_import.from_iterable(session, e, lines)
     assert pre.rows[0].status == "new"
     assert "extra_thing" in pre.unknown_columns
-    # 'id' is silently ignored, never reported as unknown
+    # 'id' is treated as a structural column, not surfaced as unknown.
     assert "id" not in [c.lower() for c in pre.unknown_columns]
 
 
@@ -390,3 +392,171 @@ def test_preview_normalizes_raw_dict_keys_for_uppercase_headers(session):
     assert pre.rows[0].raw["name"] == "Bad"
     assert pre.rows[0].raw["carrier"] == "Travelers"
     assert pre.rows[0].raw["effective_date"] == "not-a-date"
+
+
+# --- round-trip / id-update ---------------------------------------------
+
+
+def _csv_with_id(*rows: str) -> list[str]:
+    return [
+        "id,name,carrier,coverage,policy_number,"
+        "effective_date,expiration_date,location,description",
+        *rows,
+    ]
+
+
+def test_preview_id_match_classifies_as_update(session):
+    e = _engagement(session)
+    p = policies.create(
+        session,
+        e,
+        PolicyInput(name="Main GL", carrier="Travelers", policy_number="GL-9001"),
+    )
+    lines = _csv_with_id(
+        f"{p.id},Main GL renewed,Travelers,GL,GL-9001,2027-01-01,2028-01-01,,",
+    )
+    pre = policy_import.from_iterable(session, e, lines)
+    assert pre.update_count == 1
+    assert pre.new_count == 0
+    assert pre.duplicate_count == 0
+    row = pre.rows[0]
+    assert row.status == "update"
+    assert row.existing_id == p.id
+
+
+def test_preview_id_not_in_engagement_is_error(session):
+    e = _engagement(session)
+    other = engagements.create(session, "Other")
+    foreign = policies.create(
+        session, other, PolicyInput(name="Foreign", carrier="X", policy_number="X-1")
+    )
+    lines = _csv_with_id(
+        f"{foreign.id},Renamed,X,GL,X-1,,,,",
+    )
+    pre = policy_import.from_iterable(session, e, lines)
+    assert pre.error_count == 1
+    assert "is not a policy in this engagement" in pre.rows[0].message
+
+
+def test_preview_duplicate_id_in_csv_flagged(session):
+    e = _engagement(session)
+    p = policies.create(
+        session,
+        e,
+        PolicyInput(name="Main GL", carrier="Travelers", policy_number="GL-9001"),
+    )
+    lines = _csv_with_id(
+        f"{p.id},First edit,Travelers,GL,GL-9001,,,,",
+        f"{p.id},Second edit,Travelers,GL,GL-9001,,,,",
+    )
+    pre = policy_import.from_iterable(session, e, lines)
+    assert pre.update_count == 1
+    assert pre.error_count == 1
+    assert "more than once" in pre.rows[1].message
+
+
+def test_preview_id_skips_dedup_against_self(session):
+    """Round-trip safety: re-importing an unchanged row with its own id
+    must not be flagged as a duplicate of itself."""
+    e = _engagement(session)
+    p = policies.create(
+        session,
+        e,
+        PolicyInput(name="Main GL", carrier="Travelers", policy_number="GL-9001"),
+    )
+    lines = _csv_with_id(
+        f"{p.id},Main GL,Travelers,GL,GL-9001,,,,",
+    )
+    pre = policy_import.from_iterable(session, e, lines)
+    assert [r.status for r in pre.rows] == ["update"]
+
+
+def test_commit_applies_updates_in_place(session):
+    e = _engagement(session)
+    p = policies.create(
+        session,
+        e,
+        PolicyInput(
+            name="Main GL",
+            carrier="Travelers",
+            coverage="GL",
+            policy_number="GL-9001",
+            effective_date=date(2026, 1, 1),
+            expiration_date=date(2027, 1, 1),
+            location="HQ",
+            description="primary",
+        ),
+    )
+    original_id = p.id
+    lines = _csv_with_id(
+        f"{p.id},Main GL,Travelers,GL,GL-9001,2026-06-01,2027-06-01,Annex,renewed early",
+    )
+    pre = policy_import.from_iterable(session, e, lines)
+    result = policy_import.commit(session, e, pre)
+    assert result.imported == 0
+    assert result.updated == 1
+    refreshed = next(p for p in policies.list_for(session, e) if p.id == original_id)
+    assert refreshed.effective_date == date(2026, 6, 1)
+    assert refreshed.expiration_date == date(2027, 6, 1)
+    assert refreshed.location == "Annex"
+    assert refreshed.description == "renewed early"
+
+
+def test_round_trip_export_then_import_no_op(session):
+    """Export → re-import without edits should produce zero writes."""
+    from openitems.domain import policy_export
+
+    e = _engagement(session)
+    policies.create(
+        session,
+        e,
+        PolicyInput(
+            name="Main GL",
+            carrier="Travelers",
+            coverage="GL",
+            policy_number="GL-9001",
+            effective_date=date(2026, 1, 1),
+            expiration_date=date(2027, 1, 1),
+        ),
+    )
+    policies.create(
+        session,
+        e,
+        PolicyInput(
+            name="WC",
+            carrier="Hartford",
+            coverage="WC",
+            policy_number="WC-1",
+        ),
+    )
+
+    csv_text = policy_export.to_csv_text(policies.list_for(session, e))
+    lines = csv_text.splitlines()
+    pre = policy_import.from_iterable(session, e, lines)
+    assert pre.update_count == 2
+    assert pre.new_count == 0
+    assert pre.error_count == 0
+
+    result = policy_import.commit(session, e, pre)
+    assert result.updated == 2
+    assert result.imported == 0
+
+
+def test_round_trip_with_edit(session):
+    """Export, edit one cell, re-import → that one row is updated."""
+    from openitems.domain import policy_export
+
+    e = _engagement(session)
+    p = policies.create(
+        session,
+        e,
+        PolicyInput(name="Main GL", carrier="Travelers", policy_number="GL-9001"),
+    )
+
+    csv_text = policy_export.to_csv_text(policies.list_for(session, e))
+    edited = csv_text.replace("Travelers", "Travelers Casualty")
+    pre = policy_import.from_iterable(session, e, edited.splitlines())
+    policy_import.commit(session, e, pre)
+
+    refreshed = session.get(type(p), p.id)
+    assert refreshed.carrier == "Travelers Casualty"

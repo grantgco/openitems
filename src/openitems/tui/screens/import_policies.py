@@ -143,8 +143,9 @@ class ImportPoliciesScreen(ModalScreen[bool]):
             notes.append(f"Skipped {pre.skipped_blank_rows} blank row(s)")
         suffix = "\n" + "\n".join(f"[dim]{note}[/dim]" for note in notes) if notes else ""
         self.body.update(
-            "[dim]step 2/3 · review what will happen. Only [b]new[/b] rows "
-            "will be inserted; duplicates and errors are skipped.[/dim]"
+            "[dim]step 2/3 · review what will happen. [b]new[/b] rows are "
+            "inserted, [b]update[/b] rows (matched by id) overwrite the existing "
+            "policy in place; duplicates and errors are skipped.[/dim]"
             + suffix
         )
         self.path_input.display = False
@@ -153,7 +154,7 @@ class ImportPoliciesScreen(ModalScreen[bool]):
         self.preview_table.display = True
         self._populate_preview_table(pre)
         self.summary.update(self._summary_line(pre))
-        if pre.new_count == 0:
+        if pre.applies_count == 0:
             self.next_btn.disabled = True
             self.next_btn.label = "Nothing to import"
         else:
@@ -167,11 +168,21 @@ class ImportPoliciesScreen(ModalScreen[bool]):
     def _render_step_3(self) -> None:
         assert self._preview is not None
         pre = self._preview
+        write_bits: list[str] = []
+        if pre.new_count:
+            write_bits.append(
+                f"insert [b]{pre.new_count}[/b] "
+                f"polic{'y' if pre.new_count == 1 else 'ies'}"
+            )
+        if pre.update_count:
+            write_bits.append(
+                f"update [b]{pre.update_count}[/b] "
+                f"polic{'y' if pre.update_count == 1 else 'ies'}"
+            )
+        action = " and ".join(write_bits) or "do nothing"
         self.body.update(
             f"[dim]step 3/3 · confirm.[/dim]\n\n"
-            f"Import [b]{pre.new_count}[/b] new "
-            f"polic{'y' if pre.new_count == 1 else 'ies'} into "
-            f"[b]{self._engagement_name}[/b]? "
+            f"{action.capitalize()} in [b]{self._engagement_name}[/b]? "
             f"{pre.duplicate_count} duplicate(s) and "
             f"{pre.error_count} error(s) will be skipped."
         )
@@ -187,6 +198,7 @@ class ImportPoliciesScreen(ModalScreen[bool]):
     def _summary_line(self, pre: ImportPreview) -> str:
         return (
             f"[b green]{pre.new_count} new[/b green]  ·  "
+            f"[b cyan]{pre.update_count} update[/b cyan]  ·  "
             f"[b yellow]{pre.duplicate_count} duplicate[/b yellow]  ·  "
             f"[b red]{pre.error_count} error[/b red]"
         )
@@ -264,7 +276,7 @@ class ImportPoliciesScreen(ModalScreen[bool]):
                 self._render_step()
         elif self.step == 2:
             assert self._preview is not None
-            if self._preview.new_count == 0:
+            if self._preview.applies_count == 0:
                 return
             self.step = 3
             self._render_step()
@@ -311,17 +323,21 @@ class ImportPoliciesScreen(ModalScreen[bool]):
             return
 
         bits = [f"{result.imported} imported"]
+        if result.updated:
+            bits.append(f"{result.updated} updated")
         if result.skipped_duplicates:
             bits.append(f"{result.skipped_duplicates} skipped")
         if result.errors:
             bits.append(f"{result.errors} error(s)")
         self.app.notify("Policies: " + ", ".join(bits))
-        self.dismiss(result.imported > 0)
+        self.dismiss(result.imported + result.updated > 0)
 
 
 def _status_cell(status: str) -> Text:
     if status == "new":
         return Text("NEW", style=f"bold {palette.GREEN}")
+    if status == "update":
+        return Text("UPDATE", style=f"bold {palette.CYAN}")
     if status == "duplicate":
         return Text("DUPLICATE", style=f"bold {palette.ACCENT}")
     return Text("ERROR", style=f"bold {palette.RED}")

@@ -135,6 +135,15 @@ def _apply_lightweight_migrations() -> None:
                     )
                 )
 
+    if "policy" in table_names:
+        cols = {c["name"] for c in insp.get_columns("policy")}
+        if "archived_at" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE policy ADD COLUMN archived_at DATETIME"))
+        if "renewed_from_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE policy ADD COLUMN renewed_from_id VARCHAR(32)"))
+
     if "bucket" in table_names:
         _migrate_legacy_default_workflow()
 

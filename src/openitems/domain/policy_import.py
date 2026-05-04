@@ -28,9 +28,10 @@ from importlib import resources
 from pathlib import Path
 from typing import Literal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from openitems.db.models import Engagement
+from openitems.db.models import Engagement, Policy
 from openitems.domain import policies
 from openitems.domain.dates import DateParseError, parse_strict
 from openitems.domain.policies import PolicyDateError, PolicyInput
@@ -52,7 +53,7 @@ SUPPORTED_ENCODINGS: tuple[str, ...] = ("utf-8-sig", "cp1252")
 SNIFF_DELIMITERS: str = ",;\t|"
 MAX_ROWS: int = 10_000
 
-RowStatus = Literal["new", "duplicate", "error"]
+RowStatus = Literal["new", "update", "duplicate", "error"]
 
 
 class ImportFileError(ValueError):
@@ -67,6 +68,7 @@ class RowOutcome:
     input: PolicyInput | None = None
     message: str = ""
     dedup_key: tuple[str, str] | None = None
+    existing_id: str | None = None  # set on ``update`` rows: the policy id to patch
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,10 @@ class ImportPreview:
         return sum(1 for r in self.rows if r.status == "new")
 
     @property
+    def update_count(self) -> int:
+        return sum(1 for r in self.rows if r.status == "update")
+
+    @property
     def duplicate_count(self) -> int:
         return sum(1 for r in self.rows if r.status == "duplicate")
 
@@ -87,10 +93,16 @@ class ImportPreview:
     def error_count(self) -> int:
         return sum(1 for r in self.rows if r.status == "error")
 
+    @property
+    def applies_count(self) -> int:
+        """Rows the importer will write — inserts plus in-place updates."""
+        return self.new_count + self.update_count
+
 
 @dataclass(frozen=True)
 class ImportResult:
     imported: int
+    updated: int
     skipped_duplicates: int
     errors: int
     error_messages: list[str]
@@ -177,13 +189,17 @@ def _preview_from_reader(
 
     normalized = [h.strip().lower() for h in header_row]
     known_indices: dict[str, int] = {}
+    id_index: int | None = None
     unknown: list[str] = []
     for idx, key in enumerate(normalized):
         if not key:
             continue
+        if key == "id":
+            id_index = idx
+            continue
         if key in CANONICAL_HEADERS:
             known_indices.setdefault(key, idx)
-        elif key != "id":  # silently swallow id; treat anything else as unknown
+        else:
             unknown.append(header_row[idx])
 
     if "name" not in known_indices:
@@ -193,7 +209,9 @@ def _preview_from_reader(
         )
 
     existing_keys = _existing_dedup_keys(session, engagement)
+    existing_ids = _existing_policy_ids(session, engagement)
     seen_in_csv: set[tuple[str, str]] = set()
+    seen_ids: set[str] = set()
     rows: list[RowOutcome] = []
     skipped_blanks = 0
 
@@ -209,11 +227,53 @@ def _preview_from_reader(
                 "preview on a malformed file.)"
             )
         raw = _row_to_dict(normalized, raw_row)
+        row_id = _cell(raw_row, id_index) if id_index is not None else ""
+
         try:
             input_ = _row_to_input(raw_row, known_indices)
         except (DateParseError, PolicyDateError, ValueError) as exc:
             rows.append(
                 RowOutcome(line=line_offset, raw=raw, status="error", message=str(exc))
+            )
+            continue
+
+        if row_id:
+            if row_id in seen_ids:
+                rows.append(
+                    RowOutcome(
+                        line=line_offset,
+                        raw=raw,
+                        status="error",
+                        input=input_,
+                        message=f"id '{row_id}' appears more than once in this CSV.",
+                    )
+                )
+                continue
+            if row_id not in existing_ids:
+                # An id present in the CSV but not in this engagement is
+                # almost always an editing accident — a row pasted from a
+                # different engagement's export, or a stale file from before
+                # the policy was deleted. Surface as an error rather than
+                # silently inserting a row with a foreign id.
+                rows.append(
+                    RowOutcome(
+                        line=line_offset,
+                        raw=raw,
+                        status="error",
+                        input=input_,
+                        message=f"id '{row_id}' is not a policy in this engagement.",
+                    )
+                )
+                continue
+            seen_ids.add(row_id)
+            rows.append(
+                RowOutcome(
+                    line=line_offset,
+                    raw=raw,
+                    status="update",
+                    input=input_,
+                    existing_id=row_id,
+                )
             )
             continue
 
@@ -262,24 +322,50 @@ def commit(
     engagement: Engagement,
     preview_obj: ImportPreview,
 ) -> ImportResult:
-    """Insert every ``status=='new'`` row via ``policies.create``.
+    """Apply every ``new`` and ``update`` row.
 
-    Defensive: if ``policies.create`` raises for a row the preview classified
-    as ``new`` (shouldn't happen — preview validates the same way), the row is
-    counted as an error in the result rather than aborting the whole import.
+    Inserts go through ``policies.create``; updates go through ``policies.update``
+    against the row identified by ``existing_id``. Defensive: if either call
+    raises for a row the preview classified as writeable (shouldn't happen —
+    preview validates with the same code paths), the row is counted as an
+    error rather than aborting the whole import.
     """
     imported = 0
+    updated = 0
     errors: list[str] = []
     for row in preview_obj.rows:
-        if row.status != "new" or row.input is None:
+        if row.input is None:
             continue
         try:
-            policies.create(session, engagement, row.input)
-            imported += 1
+            if row.status == "new":
+                policies.create(session, engagement, row.input)
+                imported += 1
+            elif row.status == "update":
+                target = session.get(Policy, row.existing_id) if row.existing_id else None
+                if target is None or target.engagement_id != engagement.id:
+                    errors.append(
+                        f"Line {row.line}: id '{row.existing_id}' "
+                        "no longer exists in this engagement."
+                    )
+                    continue
+                policies.update(
+                    session,
+                    target,
+                    name=row.input.name,
+                    carrier=row.input.carrier,
+                    coverage=row.input.coverage,
+                    policy_number=row.input.policy_number,
+                    effective_date=row.input.effective_date,
+                    expiration_date=row.input.expiration_date,
+                    location=row.input.location,
+                    description=row.input.description,
+                )
+                updated += 1
         except (PolicyDateError, ValueError) as exc:
             errors.append(f"Line {row.line}: {exc}")
     return ImportResult(
         imported=imported,
+        updated=updated,
         skipped_duplicates=preview_obj.duplicate_count,
         errors=preview_obj.error_count + len(errors),
         error_messages=[
@@ -302,6 +388,23 @@ def _existing_dedup_keys(session: Session, engagement: Engagement) -> set[tuple[
             continue
         keys.add((carrier, number))
     return keys
+
+
+def _existing_policy_ids(session: Session, engagement: Engagement) -> set[str]:
+    """Return ids of every live policy on ``engagement``.
+
+    Soft-deleted policies are deliberately excluded — re-importing a row
+    that points at a deleted id should fail loud rather than resurrect a
+    row the user already removed. Archived policies are included so the
+    round-trip still works against historical rows that happen to be in
+    the export.
+    """
+    stmt = (
+        select(Policy.id)
+        .where(Policy.engagement_id == engagement.id)
+        .where(Policy.deleted_at.is_(None))
+    )
+    return set(session.scalars(stmt))
 
 
 def _row_to_dict(headers_lower: list[str], raw_row: list[str]) -> dict[str, str]:

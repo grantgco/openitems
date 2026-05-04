@@ -138,6 +138,42 @@ def test_list_for_excludes_deleted(session):
     assert {p.id for p in all_} == {p1.id, p2.id}
 
 
+def test_list_for_excludes_archived_by_default(session):
+    e = _engagement(session)
+    live = _policy(session, e, name="Live")
+    old = _policy(session, e, name="Old")
+    policies.archive(session, old)
+    session.flush()
+    visible = policies.list_for(session, e)
+    assert [p.id for p in visible] == [live.id]
+    with_archived = policies.list_for(session, e, include_archived=True)
+    assert {p.id for p in with_archived} == {live.id, old.id}
+
+
+def test_count_archived_for_skips_deleted(session):
+    e = _engagement(session)
+    a = _policy(session, e, name="A")
+    b = _policy(session, e, name="B")
+    c = _policy(session, e, name="C")
+    policies.archive(session, a)
+    policies.archive(session, b)
+    policies.archive(session, c)
+    policies.soft_delete(session, c)
+    session.flush()
+    assert policies.count_archived_for(session, e) == 2
+
+
+def test_archive_unarchive_round_trip(session):
+    e = _engagement(session)
+    p = _policy(session, e)
+    policies.archive(session, p)
+    session.flush()
+    assert p.archived_at is not None
+    policies.unarchive(session, p)
+    session.flush()
+    assert p.archived_at is None
+
+
 def test_days_to_renewal_basic(session):
     e = _engagement(session)
     today = date(2026, 5, 1)
@@ -261,6 +297,128 @@ def test_policy_notes_reject_empty(session):
     p = _policy(session, e)
     with pytest.raises(ValueError):
         policy_notes.add(session, p, "   ")
+
+
+def test_suggest_renewal_dates_chains_full_term(session):
+    e = _engagement(session)
+    p = _policy(
+        session,
+        e,
+        effective_date=date(2026, 1, 1),
+        expiration_date=date(2027, 1, 1),
+    )
+    new_eff, new_exp = policies.suggest_renewal_dates(p, today=date(2026, 12, 1))
+    assert new_eff == date(2027, 1, 1)
+    assert new_exp == date(2028, 1, 1)
+
+
+def test_suggest_renewal_dates_handles_short_term(session):
+    e = _engagement(session)
+    # Six-month policy — successor should mirror the term, not snap to a year.
+    p = _policy(
+        session,
+        e,
+        effective_date=date(2026, 1, 1),
+        expiration_date=date(2026, 7, 1),
+    )
+    new_eff, new_exp = policies.suggest_renewal_dates(p, today=date(2026, 6, 1))
+    assert new_eff == date(2026, 7, 1)
+    assert new_exp == date(2027, 1, 1)
+
+
+def test_suggest_renewal_dates_falls_back_to_today_and_one_year(session):
+    e = _engagement(session)
+    p = _policy(session, e, effective_date=None, expiration_date=None)
+    today = date(2026, 5, 1)
+    new_eff, new_exp = policies.suggest_renewal_dates(p, today=today)
+    assert new_eff == today
+    assert new_exp == date(2027, 5, 1)
+
+
+def test_renew_creates_successor_and_archives_predecessor(session):
+    e = _engagement(session)
+    today = date(2026, 5, 1)
+    old = _policy(
+        session,
+        e,
+        effective_date=date(2025, 5, 1),
+        expiration_date=today,
+    )
+    new_input = PolicyInput(
+        name="Main GL 2027",
+        carrier=old.carrier,
+        coverage=old.coverage,
+        policy_number="GL-9002",
+        effective_date=today,
+        expiration_date=date(2027, 5, 1),
+    )
+    successor = policies.renew(session, old, new_input)
+    session.flush()
+
+    assert successor.id != old.id
+    assert successor.engagement_id == e.id
+    assert successor.renewed_from_id == old.id
+    assert old.archived_at is not None
+
+    # The engagement-scoped list should now show only the successor.
+    rows = policies.list_for(session, e)
+    assert [p.id for p in rows] == [successor.id]
+
+
+def test_renew_can_skip_archive(session):
+    e = _engagement(session)
+    today = date(2026, 5, 1)
+    old = _policy(session, e, expiration_date=today)
+    new_input = PolicyInput(
+        name="Successor",
+        carrier=old.carrier,
+        coverage=old.coverage,
+        policy_number="GL-NEW",
+        effective_date=today,
+        expiration_date=date(2027, 5, 1),
+    )
+    successor = policies.renew(session, old, new_input, archive_predecessor=False)
+    session.flush()
+    assert old.archived_at is None
+    rows = policies.list_for(session, e)
+    assert {p.id for p in rows} == {old.id, successor.id}
+
+
+def test_renew_validates_dates(session):
+    e = _engagement(session)
+    today = date(2026, 5, 1)
+    old = _policy(session, e, expiration_date=today)
+    bad_input = PolicyInput(
+        name="Bad",
+        effective_date=date(2027, 5, 1),
+        expiration_date=date(2026, 5, 1),
+    )
+    with pytest.raises(PolicyDateError):
+        policies.renew(session, old, bad_input)
+    # Predecessor must remain live when validation fails: archiving runs
+    # after create() succeeds, so a date-order rejection should not flip
+    # ``archived_at`` on the predecessor.
+    assert old.archived_at is None
+
+
+def test_renewal_radar_excludes_archived_predecessor(session):
+    today = date(2026, 5, 1)
+    e = _engagement(session)
+    old = _policy(session, e, name="Old", expiration_date=today)
+    new_input = PolicyInput(
+        name="New",
+        carrier=old.carrier,
+        coverage=old.coverage,
+        policy_number="DIFFERENT-NUM",
+        effective_date=today,
+        expiration_date=today + timedelta(days=365),
+    )
+    policies.renew(session, old, new_input)
+    session.flush()
+    rows = triage.list_policies_across_engagements(
+        session, today=today, horizon_days=400
+    )
+    assert [r.policy.name for r in rows] == ["New"]
 
 
 def test_policy_cascade_delete(session):

@@ -130,6 +130,7 @@ def list_policies_across_engagements(
         select(Policy)
         .join(Engagement, Policy.engagement_id == Engagement.id)
         .where(Policy.deleted_at.is_(None))
+        .where(Policy.archived_at.is_(None))
         .where(Engagement.archived_at.is_(None))
         .where(Engagement.is_inbox.is_(False))
         .where(Policy.expiration_date.is_not(None))

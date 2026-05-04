@@ -432,7 +432,9 @@ def export_engagement(
     _apply_page_setup(ws, row)
 
     live_policies = (
-        [p for p in policies if p.deleted_at is None] if policies else []
+        [p for p in policies if p.deleted_at is None and p.archived_at is None]
+        if policies
+        else []
     )
     if live_policies:
         live_policies.sort(

@@ -19,6 +19,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -58,11 +59,14 @@ def list_for(
     engagement: Engagement,
     *,
     include_deleted: bool = False,
+    include_archived: bool = False,
 ) -> list[Policy]:
     """Return policies for ``engagement``, sorted by expiration ascending.
 
     Policies without an expiration date sort last, then by carrier/name to keep
-    the rendering stable for the screen and the workbook tab.
+    the rendering stable for the screen and the workbook tab. ``archived_at``
+    flags historical predecessors superseded by a renewal — they're excluded
+    by default for the same reason ``deleted_at`` is.
     """
     stmt = (
         select(Policy)
@@ -71,12 +75,25 @@ def list_for(
     )
     if not include_deleted:
         stmt = stmt.where(Policy.deleted_at.is_(None))
+    if not include_archived:
+        stmt = stmt.where(Policy.archived_at.is_(None))
     stmt = stmt.order_by(
         Policy.expiration_date.asc().nulls_last(),
         Policy.carrier.asc(),
         Policy.name.asc(),
     )
     return list(session.scalars(stmt))
+
+
+def count_archived_for(session: Session, engagement: Engagement) -> int:
+    """Return the number of archived (non-deleted) policies on ``engagement``."""
+    stmt = (
+        select(Policy.id)
+        .where(Policy.engagement_id == engagement.id)
+        .where(Policy.deleted_at.is_(None))
+        .where(Policy.archived_at.is_not(None))
+    )
+    return len(list(session.scalars(stmt)))
 
 
 def create(session: Session, engagement: Engagement, input: PolicyInput) -> Policy:
@@ -134,6 +151,64 @@ def restore(session: Session, policy: Policy) -> None:
     policy.deleted_at = None
 
 
+def archive(session: Session, policy: Policy) -> None:
+    """Mark ``policy`` as a historical predecessor — kept for the record but
+    omitted from the engagement-scoped list and the cross-engagement radar.
+
+    Distinct from ``soft_delete``: archive means "this was real, it expired
+    and was renewed"; soft-delete means "this row was a mistake."
+    """
+    policy.archived_at = _utcnow()
+
+
+def unarchive(session: Session, policy: Policy) -> None:
+    policy.archived_at = None
+
+
+def suggest_renewal_dates(
+    policy: Policy, today: date | None = None
+) -> tuple[date | None, date | None]:
+    """Default ``(effective, expiration)`` to use when renewing ``policy``.
+
+    Picks the old expiration as the new effective (the standard "no gap"
+    renewal), or today if the predecessor had no expiration on file. The
+    new expiration mirrors the predecessor's term length when both old
+    dates exist; otherwise it falls back to one calendar year.
+    """
+    today = today or date.today()
+    new_eff = policy.expiration_date or today
+    if policy.effective_date and policy.expiration_date:
+        term = relativedelta(policy.expiration_date, policy.effective_date)
+        new_exp = new_eff + term
+        if new_exp <= new_eff:
+            new_exp = new_eff + relativedelta(years=1)
+    else:
+        new_exp = new_eff + relativedelta(years=1)
+    return new_eff, new_exp
+
+
+def renew(
+    session: Session,
+    predecessor: Policy,
+    input: PolicyInput,
+    *,
+    archive_predecessor: bool = True,
+) -> Policy:
+    """Create a successor policy and (optionally) archive the predecessor.
+
+    The successor inherits the engagement and is linked back via
+    ``renewed_from_id`` so the lineage survives an archive sweep. Date
+    validation runs through ``create`` — callers can pass any prefilled
+    ``PolicyInput``, including one built from ``suggest_renewal_dates``.
+    """
+    successor = create(session, predecessor.engagement, input)
+    successor.renewed_from_id = predecessor.id
+    if archive_predecessor:
+        archive(session, predecessor)
+    session.flush()
+    return successor
+
+
 def days_to_renewal(policy: Policy, today: date | None = None) -> int | None:
     """Days from ``today`` until ``expiration_date``. Negative when lapsed.
 
@@ -165,6 +240,7 @@ def coverage_suggestions(
     stmt = (
         select(Policy.coverage, Policy.updated_at)
         .where(Policy.deleted_at.is_(None))
+        .where(Policy.archived_at.is_(None))
         .order_by(Policy.updated_at.asc())
     )
     if engagement is not None:

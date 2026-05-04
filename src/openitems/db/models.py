@@ -160,6 +160,10 @@ class Policy(Base):
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    renewed_from_id: Mapped[str | None] = mapped_column(
+        ForeignKey("policy.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     engagement: Mapped[Engagement] = relationship(back_populates="policies")
     notes: Mapped[list[PolicyNote]] = relationship(

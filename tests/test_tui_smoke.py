@@ -646,3 +646,137 @@ async def test_policies_import_csv_round_trip(app_environment, tmp_path):
         ).all()
         names = sorted(p.name for p in rows)
         assert names == ["Main GL", "WC"]
+
+
+@pytest.mark.asyncio
+async def test_policies_export_round_trip(app_environment, tmp_path):
+    """P → x exports a CSV; that file feeds the import wizard back through
+    the round-trip path and produces in-place updates, not duplicates."""
+    from sqlalchemy import select
+
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Engagement, Policy
+    from openitems.domain import policies as policies_mod
+    from openitems.domain.policies import PolicyInput
+    from openitems.tui.app import OpenItemsApp
+
+    with session_scope() as s:
+        engagement = s.scalars(select(Engagement)).first()
+        policies_mod.create(
+            s,
+            engagement,
+            PolicyInput(
+                name="Main GL",
+                carrier="Travelers",
+                coverage="GL",
+                policy_number="GL-9001",
+                effective_date=date(2026, 1, 1),
+                expiration_date=date(2027, 1, 1),
+            ),
+        )
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("P")
+        await pilot.pause()
+        assert app.screen.__class__.__name__ == "PoliciesScreen"
+
+        await pilot.press("x")
+        await pilot.pause()
+
+    # Locate the freshly written CSV in the tmp exports dir.
+    exports = list((tmp_path / "exports").glob("policies-*.csv"))
+    assert len(exports) == 1
+    csv_path = exports[0]
+
+    # Edit one cell and feed the file back through the wizard. Read with
+    # utf-8-sig so the BOM written by the exporter is stripped.
+    raw = csv_path.read_text(encoding="utf-8-sig")
+    csv_path.write_text(
+        raw.replace("Travelers", "Travelers Casualty"), encoding="utf-8"
+    )
+
+    app2 = OpenItemsApp()
+    async with app2.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("P")
+        await pilot.pause()
+        await pilot.press("i")
+        await pilot.pause()
+        wizard = app2.screen
+        assert wizard.__class__.__name__ == "ImportPoliciesScreen"
+        wizard.path_input.value = str(csv_path)
+        wizard.action_next()  # 1 → 2
+        await pilot.pause()
+        assert wizard._preview is not None
+        assert wizard._preview.update_count == 1
+        assert wizard._preview.new_count == 0
+        wizard.action_next()  # 2 → 3
+        await pilot.pause()
+        wizard.action_next()  # commit
+        await pilot.pause()
+
+    with session_scope() as s:
+        rows = s.scalars(select(Policy)).all()
+        assert len(rows) == 1
+        assert rows[0].carrier == "Travelers Casualty"
+
+
+@pytest.mark.asyncio
+async def test_policies_archive_history_restore_flow(app_environment):
+    """P → A archives the selected policy; H toggles history; u restores."""
+    from sqlalchemy import select
+
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Engagement, Policy
+    from openitems.domain import policies as policies_mod
+    from openitems.domain.policies import PolicyInput
+    from openitems.tui.app import OpenItemsApp
+
+    with session_scope() as s:
+        engagement = s.scalars(select(Engagement)).first()
+        policies_mod.create(
+            s,
+            engagement,
+            PolicyInput(
+                name="Main GL",
+                carrier="Travelers",
+                coverage="GL",
+                policy_number="GL-1",
+                effective_date=date(2026, 1, 1),
+                expiration_date=date(2027, 1, 1),
+            ),
+        )
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("P")
+        await pilot.pause()
+        assert app.screen.__class__.__name__ == "PoliciesScreen"
+
+        # Archive the only row.
+        await pilot.press("A")
+        await pilot.pause()
+
+        with session_scope() as s:
+            p = s.scalars(select(Policy)).first()
+            assert p is not None
+            assert p.archived_at is not None
+
+        # Live list now empty; toggle history to see the archived row.
+        screen = app.screen
+        assert screen._row_policy_ids == []
+        await pilot.press("H")
+        await pilot.pause()
+        assert screen._show_history is True
+        assert len(screen._row_policy_ids) == 1
+
+        # u restores it.
+        await pilot.press("u")
+        await pilot.pause()
+        with session_scope() as s:
+            p = s.scalars(select(Policy)).first()
+            assert p is not None
+            assert p.archived_at is None
