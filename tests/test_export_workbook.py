@@ -4,7 +4,8 @@ from datetime import date, timedelta
 
 from openpyxl import load_workbook
 
-from openitems.domain import checklists, engagements, tasks
+from openitems.domain import checklists, engagements, policies, tasks
+from openitems.domain.policies import PolicyInput
 from openitems.domain.tasks import TaskInput
 from openitems.export.theme import (
     CLR_RED,
@@ -178,3 +179,146 @@ def test_export_excludes_completed_and_deleted(session, tmp_path):
     assert "Old completed thing" not in names
     assert "Refactor exporter sheet" not in names
     assert "Migrate auth flow" in names
+
+
+def test_export_omits_policies_tab_when_no_policies(session, tmp_path):
+    today = date(2026, 5, 1)
+    e = _seed(session, today)
+    out = tmp_path / "open-items.xlsx"
+    export_engagement(e, e.tasks, out, today=today)
+    wb = load_workbook(out)
+    assert len(wb.sheetnames) == 1
+
+
+def test_export_includes_policies_tab_when_present(session, tmp_path):
+    today = date(2026, 5, 1)
+    e = _seed(session, today)
+
+    # Three policies: lapsed, soon-renewing, distant.
+    policies.create(
+        session,
+        e,
+        PolicyInput(
+            name="GL 2025",
+            carrier="Travelers",
+            coverage="GL",
+            policy_number="GL-9001",
+            effective_date=today - timedelta(days=400),
+            expiration_date=today - timedelta(days=10),  # lapsed
+            location="HQ",
+            description="Primary GL — needs renewal",
+        ),
+    )
+    policies.create(
+        session,
+        e,
+        PolicyInput(
+            name="Auto 2026",
+            carrier="Liberty Mutual",
+            coverage="Auto",
+            policy_number="A-44",
+            effective_date=today - timedelta(days=120),
+            expiration_date=today + timedelta(days=20),  # soon
+            location="Fleet",
+        ),
+    )
+    policies.create(
+        session,
+        e,
+        PolicyInput(
+            name="Umbrella",
+            carrier="Chubb",
+            coverage="Umbrella",
+            effective_date=today - timedelta(days=120),
+            expiration_date=today + timedelta(days=300),  # far
+        ),
+    )
+    all_policies = policies.list_for(session, e)
+
+    out = tmp_path / "open-items.xlsx"
+    export_engagement(e, e.tasks, out, today=today, policies=all_policies)
+    wb = load_workbook(out)
+    assert len(wb.sheetnames) == 2
+    pol_sheet_name = next(n for n in wb.sheetnames if n.startswith("Policies"))
+    ws = wb[pol_sheet_name]
+
+    # Title block
+    assert ws["A1"].value == "  Acme"
+    assert ws["A2"].value == "  Policies"
+    assert "3 policies" in ws["A3"].value
+    assert "1 lapsed" in ws["A3"].value
+    assert "1 renewing ≤30d" in ws["A3"].value
+
+    # Column header row
+    assert ws.cell(row=5, column=3).value == "Policy"
+    assert ws.cell(row=5, column=9).value == "Expiration"
+    assert ws.cell(row=5, column=10).value == "Days to Renewal"
+
+    # Sort: lapsed → soon → far
+    name_col = [
+        ws.cell(row=r, column=3).value
+        for r in range(6, 9)
+    ]
+    assert name_col == ["GL 2025", "Auto 2026", "Umbrella"]
+
+    # Lapsed row: expiration cell is red+bold; days cell shows lapsed marker.
+    lapsed_exp = ws.cell(row=6, column=9)
+    assert lapsed_exp.font.color.rgb.endswith(CLR_RED)
+    assert lapsed_exp.font.bold is True
+    assert "lapsed" in (ws.cell(row=6, column=10).value or "")
+
+    # Soon row: expiration cell is red but NOT bold (the quieter warning tier).
+    soon_exp = ws.cell(row=7, column=9)
+    assert soon_exp.font.color.rgb.endswith(CLR_RED)
+    assert soon_exp.font.bold is False
+
+    # Far row: expiration cell is plain.
+    far_exp = ws.cell(row=8, column=9)
+    assert far_exp.font.bold is False
+    assert not far_exp.font.color.rgb.endswith(CLR_RED)
+
+    # Sheet print setup
+    assert ws.print_title_rows == "$1:$5"
+    assert ws.freeze_panes == "A6"
+    assert ws.sheet_view.showGridLines is False
+
+
+def test_export_skips_deleted_policies(session, tmp_path):
+    today = date(2026, 5, 1)
+    e = _seed(session, today)
+    p_keep = policies.create(
+        session,
+        e,
+        PolicyInput(
+            name="Keep",
+            carrier="Travelers",
+            coverage="GL",
+            effective_date=today,
+            expiration_date=today + timedelta(days=200),
+        ),
+    )
+    p_drop = policies.create(
+        session,
+        e,
+        PolicyInput(
+            name="Drop",
+            carrier="Travelers",
+            coverage="GL",
+            effective_date=today,
+            expiration_date=today + timedelta(days=200),
+        ),
+    )
+    policies.soft_delete(session, p_drop)
+    session.flush()
+    all_policies = policies.list_for(session, e, include_deleted=True)
+    out = tmp_path / "open-items.xlsx"
+    export_engagement(e, e.tasks, out, today=today, policies=all_policies)
+    wb = load_workbook(out)
+    pol_sheet_name = next(n for n in wb.sheetnames if n.startswith("Policies"))
+    ws = wb[pol_sheet_name]
+    names = {
+        ws.cell(row=r, column=3).value
+        for r in range(6, ws.max_row + 1)
+        if ws.cell(row=r, column=3).value
+    }
+    assert names == {p_keep.name}

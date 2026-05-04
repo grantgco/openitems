@@ -14,6 +14,7 @@ from textual.widgets.option_list import Option
 from openitems.config import Config, ExportPrefs
 from openitems.db.engine import session_scope
 from openitems.domain import engagements, tasks
+from openitems.domain import policies as policies_mod
 from openitems.export.workbook import export_engagement
 from openitems.paths import exports_dir
 
@@ -58,7 +59,8 @@ def quick_export(slug: str) -> Path | None:
         if e is None:
             return None
         all_tasks = tasks.list_for(s, e, include_completed=True)
-        export_engagement(e, all_tasks, target, today=today)
+        all_policies = policies_mod.list_for(s, e)
+        export_engagement(e, all_tasks, target, today=today, policies=all_policies)
     prefs.last_path = str(target)
     cfg.export_prefs[slug] = prefs
     cfg.save()
@@ -193,7 +195,10 @@ class ExportWizardScreen(ModalScreen[Path | None]):
                     self.app.notify("Engagement gone.", severity="error")
                     return
                 all_tasks = tasks.list_for(s, e, include_completed=True)
-                export_engagement(e, all_tasks, target, today=today)
+                all_policies = policies_mod.list_for(s, e)
+                export_engagement(
+                    e, all_tasks, target, today=today, policies=all_policies
+                )
         except (OSError, PermissionError) as exc:
             self.app.notify(f"Couldn't write {target}: {exc}", severity="error")
             return

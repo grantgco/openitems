@@ -8,13 +8,14 @@ everything by ``engagement_id``; this module deliberately does not.
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from openitems.db.models import Bucket, Engagement, Task
+from openitems.db.models import Bucket, Engagement, Policy, Task
 from openitems.domain.dates import start_of_week
 from openitems.domain.tasks import is_late
 
@@ -91,6 +92,61 @@ def bucket_by_due(
         else:
             out["later"].append(t)
     return out
+
+
+@dataclass
+class PolicyRow:
+    """A policy plus the engagement it belongs to and its renewal countdown.
+
+    Used by the cross-engagement renewal radar so callers don't have to
+    re-walk the relationship for each row.
+    """
+
+    policy: Policy
+    engagement: Engagement
+    days_to_renewal: int | None
+
+    @property
+    def is_lapsed(self) -> bool:
+        d = self.days_to_renewal
+        return d is not None and d < 0
+
+
+def list_policies_across_engagements(
+    session: Session,
+    *,
+    today: date | None = None,
+    horizon_days: int | None = 120,
+) -> list[PolicyRow]:
+    """Return live policies across every active engagement, expiration ascending.
+
+    ``horizon_days`` caps how far into the future to surface — a 120-day
+    window keeps the radar focused on the next quarter's renewals plus
+    anything already lapsed. Pass ``None`` to disable the cap. Policies
+    without an ``expiration_date`` are excluded (no renewal signal).
+    """
+    today = today or date.today()
+    stmt = (
+        select(Policy)
+        .join(Engagement, Policy.engagement_id == Engagement.id)
+        .where(Policy.deleted_at.is_(None))
+        .where(Engagement.archived_at.is_(None))
+        .where(Engagement.is_inbox.is_(False))
+        .where(Policy.expiration_date.is_not(None))
+        .options(joinedload(Policy.engagement))
+        .order_by(Policy.expiration_date.asc(), Policy.carrier.asc())
+    )
+    rows: list[PolicyRow] = []
+    for p in session.scalars(stmt):
+        if p.expiration_date is None:
+            continue
+        delta = (p.expiration_date - today).days
+        if horizon_days is not None and delta > horizon_days:
+            continue
+        rows.append(
+            PolicyRow(policy=p, engagement=p.engagement, days_to_renewal=delta)
+        )
+    return rows
 
 
 def done_bucket_for(session: Session, engagement: Engagement) -> Bucket | None:

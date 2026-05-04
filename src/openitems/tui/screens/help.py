@@ -33,6 +33,8 @@ _HELP = """[b]navigation[/b]
   D                   write Markdown digest (this week, opens in default app)
   E                   switch engagement (also: edit URLs)
   A                   "my plate" — open items across every engagement
+  P                   policies for the active engagement
+  R                   renewal radar — policies across every engagement
   o                   open active engagement URL in browser
   O                   open selected task's external URL in browser
   ?                   this help

@@ -61,6 +61,8 @@ class MainScreen(Screen):
         Binding("D", "digest", "digest"),
         Binding("E", "switch_engagement", "engagement"),
         Binding("A", "all_items", "plate"),
+        Binding("P", "policies", "policies"),
+        Binding("R", "all_policies", "renewals"),
         Binding("o", "open_engagement_url", "open ↗"),
         Binding("O", "open_task_url", "open task ↗"),
         Binding("question_mark", "help", "help"),
@@ -616,6 +618,21 @@ class MainScreen(Screen):
             self._reload_active_engagement()
 
         self.app.push_screen(AllItemsScreen(), _after)
+
+    def action_policies(self) -> None:
+        """Engagement-scoped policy list (renewal sidecar)."""
+        if not self._engagement_slug:
+            self.app.notify("Pick an engagement first (E).", severity="warning")
+            return
+        from openitems.tui.screens.policies import PoliciesScreen
+
+        self.app.push_screen(PoliciesScreen(self._engagement_slug))
+
+    def action_all_policies(self) -> None:
+        """Cross-engagement renewal radar."""
+        from openitems.tui.screens.all_policies import AllPoliciesScreen
+
+        self.app.push_screen(AllPoliciesScreen())
 
     def action_switch_engagement(self) -> None:
         from openitems.tui.screens.engagement_switcher import EngagementSwitcher

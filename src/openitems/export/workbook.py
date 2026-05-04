@@ -18,7 +18,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from openitems.db.models import Engagement, Task
+from openitems.db.models import Engagement, Policy, Task
+from openitems.domain.policies import days_to_renewal
 from openitems.domain.tasks import (
     high_priority_count,
     is_completed,
@@ -90,11 +91,11 @@ def _bottom_border(color: str = CLR_GRAY_LT, weight: str = "thin") -> Border:
     )
 
 
-def _wrapped_lines(text: str | None, col_letter: str) -> int:
-    """Estimate the number of visual lines `text` occupies in column `col_letter`."""
+def _wrapped_lines_for_width(text: str | None, width: float) -> int:
+    """Estimate visual line count when wrapped at column ``width`` chars."""
     if not text:
         return 1
-    capacity = max(1.0, COL_WIDTHS[col_letter] * _WRAP_FUDGE)
+    capacity = max(1.0, width * _WRAP_FUDGE)
     total = 0
     for raw in str(text).splitlines() or [""]:
         if not raw:
@@ -102,6 +103,11 @@ def _wrapped_lines(text: str | None, col_letter: str) -> int:
         else:
             total += max(1, math.ceil(len(raw) / capacity))
     return max(1, total)
+
+
+def _wrapped_lines(text: str | None, col_letter: str) -> int:
+    """Estimate the number of visual lines `text` occupies in column `col_letter`."""
+    return _wrapped_lines_for_width(text, COL_WIDTHS[col_letter])
 
 
 def _row_height_for(*texts_and_cols: tuple[str | None, str]) -> float:
@@ -341,8 +347,14 @@ def export_engagement(
     output_path: Path,
     *,
     today: date | None = None,
+    policies: Iterable[Policy] | None = None,
 ) -> Path:
-    """Write a Planner-style Open Items List for `engagement`."""
+    """Write a Planner-style Open Items List for `engagement`.
+
+    A second ``Policies`` tab is appended when ``policies`` contains at
+    least one live row — keeping single-engagement clients without a
+    policy list on a clean one-tab workbook.
+    """
     today = today or date.today()
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -419,8 +431,213 @@ def export_engagement(
 
     _apply_page_setup(ws, row)
 
+    live_policies = (
+        [p for p in policies if p.deleted_at is None] if policies else []
+    )
+    if live_policies:
+        live_policies.sort(
+            key=lambda p: (
+                p.expiration_date is None,
+                p.expiration_date or date.max,
+                (p.carrier or "").casefold(),
+                p.name.casefold(),
+            )
+        )
+        _write_policies_sheet(
+            wb, engagement=engagement, policies=live_policies, today=today
+        )
+
     wb.save(output_path)
     return output_path
+
+
+_POL_HEADERS = (
+    "",
+    "#",
+    "Policy",
+    "Carrier",
+    "Coverage",
+    "Policy #",
+    "Location",
+    "Effective",
+    "Expiration",
+    "Days to Renewal",
+    "Description",
+)
+_POL_COL_WIDTHS: dict[str, float] = {
+    "A": 2.5,
+    "B": 5,
+    "C": 28,
+    "D": 18,
+    "E": 14,
+    "F": 16,
+    "G": 22,
+    "H": 14,
+    "I": 14,
+    "J": 16,
+    "K": 36,
+}
+_POL_OUT_COLS = len(_POL_HEADERS)
+
+
+def _write_policies_sheet(
+    wb: Workbook,
+    *,
+    engagement: Engagement,
+    policies: list[Policy],
+    today: date,
+) -> None:
+    sheet_name = f"Policies - {today.strftime('%Y-%m-%d')}"
+    ws = wb.create_sheet(title=sheet_name[:31])
+    ws.sheet_properties.tabColor = CLR_NAVY
+
+    for col, width in _POL_COL_WIDTHS.items():
+        ws.column_dimensions[col].width = width
+
+    # Title block — mirrors the Open Items sheet for visual continuity.
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=_POL_OUT_COLS)
+    ws.row_dimensions[1].height = 28
+    client = ws.cell(row=1, column=1, value=f"  {engagement.name}")
+    client.font = Font(name=FONT_NAME, size=12, bold=True, color=CLR_WHITE)
+    client.alignment = Alignment(vertical="center")
+    for c in range(1, _POL_OUT_COLS + 1):
+        ws.cell(row=1, column=c).fill = _fill(CLR_NAVY)
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=_POL_OUT_COLS)
+    ws.row_dimensions[2].height = 52
+    title = ws.cell(row=2, column=1, value="  Policies")
+    title.font = Font(name=FONT_NAME, size=22, bold=True, color=CLR_WHITE)
+    title.alignment = Alignment(vertical="center")
+    for c in range(1, _POL_OUT_COLS + 1):
+        ws.cell(row=2, column=c).fill = _fill(CLR_NAVY)
+
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=_POL_OUT_COLS)
+    ws.row_dimensions[3].height = 22
+    lapsed = sum(1 for p in policies if (d := days_to_renewal(p, today)) is not None and d < 0)
+    soon = sum(
+        1
+        for p in policies
+        if (d := days_to_renewal(p, today)) is not None and 0 <= d <= 30
+    )
+    subtitle = ws.cell(
+        row=3,
+        column=1,
+        value=(
+            "  Generated: "
+            + datetime.now().strftime("%B %-d, %Y %-I:%M %p")
+            + f"  |  {len(policies)} policies"
+            + (f"  |  {lapsed} lapsed" if lapsed else "")
+            + (f"  |  {soon} renewing ≤30d" if soon else "")
+        ),
+    )
+    subtitle.font = Font(name=FONT_NAME, size=9, color=CLR_GRAY_MED)
+    subtitle.alignment = Alignment(vertical="center")
+    for c in range(1, _POL_OUT_COLS + 1):
+        ws.cell(row=3, column=c).fill = _fill(CLR_SUBTOTAL)
+
+    ws.row_dimensions[4].height = 6  # spacer
+
+    for c, header in enumerate(_POL_HEADERS, start=1):
+        cell = ws.cell(row=5, column=c, value=header)
+        cell.font = Font(name=FONT_NAME, size=9, bold=True, color=CLR_WHITE)
+        cell.alignment = Alignment(
+            vertical="center", horizontal="center" if c <= 6 else "general"
+        )
+        cell.fill = _fill(CLR_CHARCOAL)
+    ws.row_dimensions[5].height = 26
+
+    border = _bottom_border()
+    row = 5
+    for idx, p in enumerate(policies, start=1):
+        row += 1
+        d = days_to_renewal(p, today)
+        lapsed_row = d is not None and d < 0
+        soon_row = d is not None and 0 <= d <= 30
+        fill_rgb = CLR_CREAM if idx % 2 == 0 else CLR_WHITE
+        f = _fill(fill_rgb)
+
+        for c in range(1, _POL_OUT_COLS + 1):
+            ws.cell(row=row, column=c).fill = f
+
+        ws.cell(row=row, column=2, value=idx).font = Font(
+            name=FONT_NAME, size=10, color=CLR_GRAY_MED
+        )
+        ws.cell(row=row, column=2).alignment = Alignment(
+            horizontal="center", vertical="center"
+        )
+
+        cells = (
+            (3, p.name, True),
+            (4, p.carrier, False),
+            (5, p.coverage, False),
+            (6, p.policy_number, False),
+            (7, p.location, False),
+            (8, _format_date(p.effective_date), False),
+        )
+        for col, value, bold_when_lapsed in cells:
+            cell = ws.cell(row=row, column=col, value=value)
+            cell.font = Font(
+                name=FONT_NAME,
+                size=10,
+                color=CLR_CHARCOAL,
+                bold=bold_when_lapsed and lapsed_row,
+            )
+            cell.alignment = Alignment(wrap_text=True, vertical="center")
+
+        # Two visual tiers per the spec: bold+red for lapsed (loudest), red
+        # only for ≤30d (a quieter warning), charcoal otherwise.
+        exp_cell = ws.cell(row=row, column=9, value=_format_date(p.expiration_date))
+        if lapsed_row:
+            exp_cell.font = Font(name=FONT_NAME, size=10, color=CLR_RED, bold=True)
+        elif soon_row:
+            exp_cell.font = Font(name=FONT_NAME, size=10, color=CLR_RED, bold=False)
+        else:
+            exp_cell.font = Font(name=FONT_NAME, size=10, color=CLR_CHARCOAL)
+        exp_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        days_value = (
+            "—" if d is None else (f"lapsed {-d}d" if d < 0 else f"{d}d")
+        )
+        days_cell = ws.cell(row=row, column=10, value=days_value)
+        if lapsed_row:
+            days_cell.font = Font(name=FONT_NAME, size=10, color=CLR_RED, bold=True)
+        elif soon_row:
+            days_cell.font = Font(name=FONT_NAME, size=10, color=CLR_RED, bold=False)
+        else:
+            days_cell.font = Font(name=FONT_NAME, size=10, color=CLR_GRAY_MED)
+        days_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        desc_cell = ws.cell(row=row, column=11, value=p.description or "")
+        desc_cell.font = Font(name=FONT_NAME, size=10, color=CLR_CHARCOAL)
+        desc_cell.alignment = Alignment(wrap_text=True, vertical="center")
+
+        for c in range(1, _POL_OUT_COLS + 1):
+            ws.cell(row=row, column=c).border = border
+
+        # Auto-size to whichever wrapped column is tallest.
+        ws.row_dimensions[row].height = max(
+            _MIN_TASK_ROW_HEIGHT,
+            max(
+                _wrapped_lines_for_width(p.name, _POL_COL_WIDTHS["C"]),
+                _wrapped_lines_for_width(p.description, _POL_COL_WIDTHS["K"]),
+            )
+            * _LINE_HEIGHT_PT
+            + 6,
+        )
+
+    ws.print_area = f"A1:{get_column_letter(_POL_OUT_COLS)}{row}"
+    ws.print_title_rows = "1:5"
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_margins.top = 0.5
+    ws.page_margins.bottom = 0.5
+    ws.page_margins.left = 0.4
+    ws.page_margins.right = 0.4
+    ws.print_options.horizontalCentered = True
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "A6"
 
 
 def _running_index(
