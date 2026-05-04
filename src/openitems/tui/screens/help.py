@@ -32,6 +32,7 @@ _HELP = """[b]navigation[/b]
   X                   quick-export with last settings
   D                   write Markdown digest (this week, opens in default app)
   E                   switch engagement (also: edit URLs)
+  A                   "my plate" — open items across every engagement
   o                   open active engagement URL in browser
   O                   open selected task's external URL in browser
   ?                   this help

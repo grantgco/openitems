@@ -60,6 +60,7 @@ class MainScreen(Screen):
         Binding("X", "quick_export", "quick-export"),
         Binding("D", "digest", "digest"),
         Binding("E", "switch_engagement", "engagement"),
+        Binding("A", "all_items", "plate"),
         Binding("o", "open_engagement_url", "open ↗"),
         Binding("O", "open_task_url", "open task ↗"),
         Binding("question_mark", "help", "help"),
@@ -604,6 +605,17 @@ class MainScreen(Screen):
             return
         webbrowser.open(url)
         self.app.notify(f"↗ {url}")
+
+    def action_all_items(self) -> None:
+        """Push the cross-engagement triage view."""
+        from openitems.tui.screens.all_items import AllItemsScreen
+
+        def _after(_: object) -> None:
+            # Edits made on the all-items screen may have touched the active
+            # engagement; reload so the main view reflects them.
+            self._reload_active_engagement()
+
+        self.app.push_screen(AllItemsScreen(), _after)
 
     def action_switch_engagement(self) -> None:
         from openitems.tui.screens.engagement_switcher import EngagementSwitcher
