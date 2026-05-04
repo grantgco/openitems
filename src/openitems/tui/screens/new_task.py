@@ -12,9 +12,11 @@ from openitems.db.engine import session_scope
 from openitems.domain import buckets as buckets_mod
 from openitems.domain import engagements, tasks
 from openitems.domain.constants import PRIORITIES
-from openitems.domain.dates import DateParseError, parse_strict as parse_date_strict
+from openitems.domain.dates import DateParseError
+from openitems.domain.dates import parse_strict as parse_date_strict
 from openitems.domain.tasks import TaskInput
 from openitems.domain.text import parse_labels
+from openitems.tui.widgets.tag_suggester import TagSuggester
 
 
 class NewTaskScreen(ModalScreen[bool]):
@@ -31,6 +33,9 @@ class NewTaskScreen(ModalScreen[bool]):
             self._bucket_names = (
                 buckets_mod.names_for(s, engagement) if engagement else []
             )
+            self._known_tags = (
+                tasks.distinct_labels(s, engagement) if engagement else []
+            )
         self.name_input = Input(placeholder="Task name", id="task-name")
         self.bucket_input = Input(
             placeholder="Workflow stage (e.g. Backlog)",
@@ -44,7 +49,11 @@ class NewTaskScreen(ModalScreen[bool]):
         self.assigned_input = Input(placeholder="Assigned to (free text)", id="task-assigned")
         self.start_input = Input(placeholder="Start — e.g. today", id="task-start")
         self.due_input = Input(placeholder="Due — e.g. 2026-06-01", id="task-due")
-        self.labels_input = Input(placeholder="Tags, comma-separated", id="task-labels")
+        self.labels_input = Input(
+            placeholder="Tags, comma-separated",
+            id="task-labels",
+            suggester=TagSuggester(self._known_tags),
+        )
         self.desc_input = TextArea("", id="task-desc", show_line_numbers=False)
         self.desc_input.styles.height = 6
 

@@ -17,8 +17,10 @@ from openitems.db.models import Task
 from openitems.domain import buckets as buckets_mod
 from openitems.domain import checklists, notes, tasks
 from openitems.domain.constants import PRIORITIES
-from openitems.domain.dates import DateParseError, parse_strict as parse_date_strict
+from openitems.domain.dates import DateParseError
+from openitems.domain.dates import parse_strict as parse_date_strict
 from openitems.domain.text import parse_labels
+from openitems.tui.widgets.tag_suggester import TagSuggester
 
 
 class TaskDetailScreen(ModalScreen[bool]):
@@ -35,6 +37,9 @@ class TaskDetailScreen(ModalScreen[bool]):
             self._bucket_names = (
                 buckets_mod.names_for(s, task.engagement) if task else []
             )
+            self._known_tags = (
+                tasks.distinct_labels(s, task.engagement) if task else []
+            )
         self.name_input = Input(id="task-name")
         self.bucket_input = Input(
             id="task-bucket",
@@ -44,7 +49,10 @@ class TaskDetailScreen(ModalScreen[bool]):
         self.assigned_input = Input(id="task-assigned")
         self.start_input = Input(id="task-start", placeholder="Start — e.g. today")
         self.due_input = Input(id="task-due", placeholder="Due — e.g. 2026-06-01")
-        self.labels_input = Input(id="task-labels")
+        self.labels_input = Input(
+            id="task-labels",
+            suggester=TagSuggester(self._known_tags),
+        )
         self.external_url_input = Input(
             id="task-url",
             placeholder="↗ external URL (ClientBase, JIRA, GitHub, …)",

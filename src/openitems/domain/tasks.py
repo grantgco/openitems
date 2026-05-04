@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from openitems.db.models import Bucket, Engagement, Task
 from openitems.domain.constants import PRIORITIES, STATUSES
-from openitems.domain.text import clean_text, join_labels
+from openitems.domain.text import clean_text, join_labels, parse_labels
 
 
 @dataclass
@@ -326,6 +326,29 @@ def overdue_count(tasks: Iterable[Task], today: date | None = None) -> int:
 
 def high_priority_count(tasks: Iterable[Task]) -> int:
     return sum(1 for t in tasks if t.priority in {"Important", "Urgent"})
+
+
+def distinct_labels(session: Session, engagement: Engagement) -> list[str]:
+    """Return all distinct tag labels used on live tasks in ``engagement``.
+
+    Sorted case-insensitively. When the same tag appears with different
+    casing across tasks, the most-recently-flushed casing wins — that
+    casing is what the autocomplete will suggest, so the next save
+    keeps the user's existing convention rather than imposing a new one.
+    """
+    rows = session.scalars(
+        select(Task.labels).where(
+            Task.engagement_id == engagement.id,
+            Task.deleted_at.is_(None),
+        )
+    )
+    seen: dict[str, str] = {}
+    for raw in rows:
+        for label in parse_labels(raw):
+            cf = label.casefold()
+            if cf:
+                seen[cf] = label
+    return sorted(seen.values(), key=lambda s: s.casefold())
 
 
 def auto_close_at(task: Task) -> datetime | None:

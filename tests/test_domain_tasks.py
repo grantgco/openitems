@@ -310,6 +310,22 @@ def test_sweep_skips_soft_deleted(session):
     assert t.bucket and t.bucket.name == "Resolved"
 
 
+def test_distinct_labels_dedupes_case_insensitively(session):
+    e = _engagement(session)
+    tasks.create(session, e, TaskInput(name="A", labels=["api", "Sec"]))
+    tasks.create(session, e, TaskInput(name="B", labels=["API", "docs"]))
+    # A soft-deleted task's labels should not show up.
+    deleted = tasks.create(session, e, TaskInput(name="C", labels=["secret"]))
+    tasks.soft_delete(session, deleted)
+    session.flush()
+
+    out = tasks.distinct_labels(session, e)
+    cf = [t.casefold() for t in out]
+    assert cf == ["api", "docs", "sec"]
+    # Most-recent casing wins.
+    assert "API" in out
+
+
 def test_checklist_add_toggle_counts(session):
     e = _engagement(session)
     t = tasks.create(session, e, TaskInput(name="X"))
