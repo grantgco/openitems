@@ -4,17 +4,18 @@ A Textual TUI on top of SQLite that replaces a Microsoft Planner workflow and re
 
 ## Mental model
 
-- **Bucket = workflow stage.** Tasks move between buckets (Backlog → In Progress → In Review → Done) as they progress. The bucket *is* the progress signal. Bucket names stay free-text; what a bucket *means* is determined by `Bucket.is_done_state` and `sort_order`.
-- **`Bucket.is_done_state`** is the source of truth for "this task is done." Tasks in a done-state bucket are excluded from open-items views and the `.xlsx` export. The default seed for every new engagement marks `Done` as the only done-state.
+- **Bucket = workflow stage.** Tasks move between buckets as they progress. The bucket *is* the progress signal. Bucket names stay free-text; what a bucket *means* is determined by `Bucket.is_done_state`, `sort_order`, and `auto_close_after_days`.
+- **Default workflow:** `Intake → In Progress → Deferred → Dropped → Resolved → Closed` (see `domain/buckets.py::DEFAULT_WORKFLOW`). `Dropped`, `Resolved`, and `Closed` are done-states. `Resolved` carries `auto_close_after_days=14`: tasks landing there get stamped `resolved_at`, and the hourly sweep promotes them to `Closed` once the timer expires. Legacy DBs (Backlog/In Review/Done) are migrated by `db/schema.py::_apply_lightweight_migrations`.
+- **`Bucket.is_done_state`** is the source of truth for "this task is done." Tasks in a done-state bucket are excluded from open-items views and the `.xlsx` export.
 - **`Task.status` is derived, not user-edited.** It auto-syncs from the bucket via `_sync_status_with_bucket` in `domain/tasks.py`. The column exists for `.xlsx` export legibility (the VBA macro filters on `status == "Completed"`); don't expose it as a separate UI control.
 - **`is_late` is computed at read time**, never persisted. Mirrors `modOpenItemsList.bas:180-184`.
 - **Engagement = workspace.** All engagements live in one SQLite DB; the active one is remembered in `~/.config/openitems/config.toml` and shown in the titlebar. New engagements get the default workflow seeded automatically (`buckets.seed_default_workflow`).
+- **Cross-engagement triage** — `MainScreen` is hard-scoped to one engagement, but the `A` keybind pushes `AllItemsScreen` (`tui/screens/all_items.py`), which lists open tasks across every active engagement grouped by due-date band. The single domain query lives in `domain/triage.py::list_open_across_engagements`.
 
 ## Reference docs (outside this repo)
 
 - `~/Downloads/modOpenItemsList.bas` — authoritative spec for the `.xlsx` output. The Python exporter (`src/openitems/export/workbook.py`) is a direct port of `BuildReport()` (`:369-793`). Reference line ranges in commit messages when you change exporter behavior.
 - `/tmp/openitems-design/open-items-tui/project/Open Items TUI.html` — the Claude Design wireframe bundle. Palette tokens at `:10-36`, three-pane layout at `:439-537`, export wizard at `:823-924`.
-- `/Users/grantgreeson/.claude/plans/i-would-like-to-luminous-sifakis.md` — original implementation plan.
 
 ## Conventions
 
@@ -53,11 +54,12 @@ We use `Base.metadata.create_all` plus a tiny additive migration block in `db/sc
 - **Don't define a custom `Changed` message on an `Input` subclass.** Shadowing `Input.Changed` breaks the parent's auto-post (wrong `__init__` signature). Instead, listen for `Input.Changed` directly with a CSS selector: `@on(Input.Changed, "#filter-bar")`.
 - **DataTable columns must be set up idempotently.** Mount-order issues bit us once. The pattern in `widgets/items_pane.py::_ensure_columns` is the reference.
 - **`screen._option_list.focus()`** — pane focus is implemented manually because Textual's tab focus order doesn't map cleanly onto our three-pane layout. See `MainScreen._focus_pane`.
+- **DataTable consumes `enter`** for its own `select_cursor` binding, so a screen-level `Binding("enter", "...")` silently never fires when the DataTable is focused. Listen for `@on(DataTable.RowSelected)` instead. See `tui/screens/all_items.py::_on_row_selected`.
 
 ## Workflows
 
 ### Run / develop
-- `uv run pytest` — full suite (~30 tests, ~1.5s)
+- `uv run pytest` — full suite (~125 tests, ~12s)
 - `uv run ruff check src tests` — lint must pass; project ignores `E501`, `N806` (SQLAlchemy `SessionLocal` convention), `RUF002/003/012`
 - `uv run openitems` — launch TUI against the real DB (default `~/openitems/openitems.db`; override via `OPENITEMS_DB` env var or `db_path` in `config.toml`; run `openitems doctor` to see resolved paths)
 - `uv run textual run --dev openitems.tui.app:OpenItemsApp` — TUI with the dev console
