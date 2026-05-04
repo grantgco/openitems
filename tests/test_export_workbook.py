@@ -80,18 +80,22 @@ def test_export_creates_workbook_with_expected_structure(session, tmp_path):
     wb = load_workbook(out)
     ws = wb.active
 
-    # Title row
-    assert ws["A1"].value == "  Open Items List"
+    # Row 1 — client / engagement name
+    assert ws["A1"].value == "  Acme"
     assert ws["A1"].font.bold is True
 
-    # Subtitle row mentions counts (3 open, 2 buckets — Engineering + Design)
-    assert "3 open items" in ws["A2"].value
-    assert "2 buckets" in ws["A2"].value
+    # Row 2 — title
+    assert ws["A2"].value == "  Open Items List"
+    assert ws["A2"].font.bold is True
 
-    # Header row 4
-    assert ws.cell(row=4, column=2).value == "#"
-    assert ws.cell(row=4, column=3).value == "Task"
-    assert ws.cell(row=4, column=9).value == "Description / Checklist"
+    # Row 3 — subtitle mentions counts (3 open, 2 buckets — Engineering + Design)
+    assert "3 open items" in ws["A3"].value
+    assert "2 buckets" in ws["A3"].value
+
+    # Header row 5
+    assert ws.cell(row=5, column=2).value == "#"
+    assert ws.cell(row=5, column=3).value == "Task"
+    assert ws.cell(row=5, column=9).value == "Description / Checklist"
 
     # First bucket header — workflow order: Engineering & Design are custom
     # (created by the seed via get_or_create after the seeded workflow stages),
@@ -99,7 +103,7 @@ def test_export_creates_workbook_with_expected_structure(session, tmp_path):
     # is mentioned first by the seed.
     bucket_headers = [
         ws.cell(row=r, column=1).value
-        for r in range(5, ws.max_row + 1)
+        for r in range(6, ws.max_row + 1)
         if ws.cell(row=r, column=1).value
         and ws.cell(row=r, column=1).value.strip().isupper()
         and ws.cell(row=r, column=2).value is None
@@ -109,7 +113,7 @@ def test_export_creates_workbook_with_expected_structure(session, tmp_path):
 
     # Find the overdue task and confirm red+bold due-date
     overdue_row = None
-    for row in ws.iter_rows(min_row=5, max_col=OUT_COLS):
+    for row in ws.iter_rows(min_row=6, max_col=OUT_COLS):
         if row[2].value == "Migrate auth flow":
             overdue_row = row[0].row
             break
@@ -131,8 +135,8 @@ def test_export_creates_workbook_with_expected_structure(session, tmp_path):
 
     # Print setup applied
     assert ws.print_area is not None
-    assert ws.print_title_rows == "$1:$4"
-    assert ws.freeze_panes == "A5"
+    assert ws.print_title_rows == "$1:$5"
+    assert ws.freeze_panes == "A6"
     assert ws.sheet_view.showGridLines is False
 
     # Summary footer is somewhere later, mentions overdue count
@@ -160,7 +164,7 @@ def test_export_excludes_completed_and_deleted(session, tmp_path):
     wb = load_workbook(out)
     ws = wb.active
 
-    names = {ws.cell(row=r, column=3).value for r in range(5, ws.max_row + 1)}
+    names = {ws.cell(row=r, column=3).value for r in range(6, ws.max_row + 1)}
     assert "Old completed thing" not in names
     assert "Refactor exporter sheet" not in names
     assert "Migrate auth flow" in names

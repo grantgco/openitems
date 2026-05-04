@@ -8,6 +8,7 @@ Output columns A–I:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from datetime import date, datetime
 from pathlib import Path
@@ -55,6 +56,13 @@ COL_WIDTHS: dict[str, float] = {
 
 HEADERS = ("", "#", "Task", "Tags", "Priority", "Assigned To", "Start", "Due", "Description / Checklist")
 
+# Approximate per-character column capacity for wrapped-text auto-sizing.
+# Excel's column width is in "characters of the default font," but with
+# proportional fonts and padding the effective wrap width runs ~10% lower.
+_WRAP_FUDGE = 0.92
+_LINE_HEIGHT_PT = 15.0  # ~ font size 10 + leading
+_MIN_TASK_ROW_HEIGHT = 22.0
+
 
 def _fill(rgb: str) -> PatternFill:
     return PatternFill(start_color=rgb, end_color=rgb, fill_type="solid")
@@ -82,38 +90,74 @@ def _bottom_border(color: str = CLR_GRAY_LT, weight: str = "thin") -> Border:
     )
 
 
-def _write_title_block(ws: Worksheet, *, total_open: int, bucket_count: int) -> None:
+def _wrapped_lines(text: str | None, col_letter: str) -> int:
+    """Estimate the number of visual lines `text` occupies in column `col_letter`."""
+    if not text:
+        return 1
+    capacity = max(1.0, COL_WIDTHS[col_letter] * _WRAP_FUDGE)
+    total = 0
+    for raw in str(text).splitlines() or [""]:
+        if not raw:
+            total += 1
+        else:
+            total += max(1, math.ceil(len(raw) / capacity))
+    return max(1, total)
+
+
+def _row_height_for(*texts_and_cols: tuple[str | None, str]) -> float:
+    lines = max(_wrapped_lines(t, c) for t, c in texts_and_cols)
+    return max(_MIN_TASK_ROW_HEIGHT, lines * _LINE_HEIGHT_PT + 6)
+
+
+def _write_title_block(
+    ws: Worksheet,
+    *,
+    client_name: str,
+    total_open: int,
+    bucket_count: int,
+) -> None:
+    # Row 1 — client name
     ws.merge_cells("A1:I1")
-    ws.row_dimensions[1].height = 52
-    title = ws.cell(row=1, column=1, value="  Open Items List")
-    title.font = Font(name=FONT_NAME, size=22, bold=True, color=CLR_WHITE)
-    title.alignment = Alignment(vertical="center")
+    ws.row_dimensions[1].height = 28
+    client = ws.cell(row=1, column=1, value=f"  {client_name}")
+    client.font = Font(name=FONT_NAME, size=12, bold=True, color=CLR_WHITE)
+    client.alignment = Alignment(vertical="center")
     _apply_band(ws, 1, CLR_NAVY)
 
+    # Row 2 — title
     ws.merge_cells("A2:I2")
-    ws.row_dimensions[2].height = 22
+    ws.row_dimensions[2].height = 52
+    title = ws.cell(row=2, column=1, value="  Open Items List")
+    title.font = Font(name=FONT_NAME, size=22, bold=True, color=CLR_WHITE)
+    title.alignment = Alignment(vertical="center")
+    _apply_band(ws, 2, CLR_NAVY)
+
+    # Row 3 — subtitle
+    ws.merge_cells("A3:I3")
+    ws.row_dimensions[3].height = 22
     subtitle_text = (
         "  Generated: "
         + datetime.now().strftime("%B %-d, %Y %-I:%M %p")
         + f"  |  {total_open} open items  |  {bucket_count} buckets"
     )
-    sub = ws.cell(row=2, column=1, value=subtitle_text)
+    sub = ws.cell(row=3, column=1, value=subtitle_text)
     sub.font = Font(name=FONT_NAME, size=9, color=CLR_GRAY_MED)
     sub.alignment = Alignment(vertical="center")
-    _apply_band(ws, 2, CLR_SUBTOTAL)
+    _apply_band(ws, 3, CLR_SUBTOTAL)
 
-    ws.row_dimensions[3].height = 6  # spacer
+    # Row 4 — spacer
+    ws.row_dimensions[4].height = 6
 
-    # Column headers — row 4
+    # Row 5 — column headers
     for c, header in enumerate(HEADERS, start=1):
-        cell = ws.cell(row=4, column=c, value=header)
+        cell = ws.cell(row=5, column=c, value=header)
         cell.font = Font(name=FONT_NAME, size=9, bold=True, color=CLR_WHITE)
         cell.alignment = Alignment(
             vertical="center",
             horizontal="center" if c <= 6 else "general",
         )
         cell.fill = _fill(CLR_CHARCOAL)
-    ws.row_dimensions[4].height = 26
+    ws.row_dimensions[5].height = 26
 
 
 def _write_bucket_header(ws: Worksheet, row: int, bucket_name: str) -> None:
@@ -131,6 +175,7 @@ def _write_task_row(
     f = _fill(fill_rgb)
     overdue = _is_overdue(task, today)
     high = task.priority in {"Urgent", "Important"}
+    description = clean_text(task.description)
 
     # A: spacer
     ws.cell(row=row, column=1).fill = f
@@ -138,7 +183,7 @@ def _write_task_row(
     # B: #
     cell = ws.cell(row=row, column=2)
     cell.font = Font(name=FONT_NAME, size=10, color=CLR_GRAY_MED)
-    cell.alignment = Alignment(horizontal="center")
+    cell.alignment = Alignment(horizontal="center", vertical="center")
     cell.fill = f
 
     # C: Task name
@@ -146,13 +191,13 @@ def _write_task_row(
     cell.font = Font(
         name=FONT_NAME, size=10, color=CLR_CHARCOAL, bold=overdue
     )
-    cell.alignment = Alignment(wrap_text=True, vertical="top")
+    cell.alignment = Alignment(wrap_text=True, vertical="center")
     cell.fill = f
 
     # D: Tags
     cell = ws.cell(row=row, column=4, value=task.labels)
     cell.font = Font(name=FONT_NAME, size=10, color=CLR_CHARCOAL)
-    cell.alignment = Alignment(horizontal="center")
+    cell.alignment = Alignment(horizontal="center", vertical="center")
     cell.fill = f
 
     # E: Priority
@@ -163,19 +208,19 @@ def _write_task_row(
         color=CLR_RED if high else CLR_CHARCOAL,
         bold=high,
     )
-    cell.alignment = Alignment(horizontal="center")
+    cell.alignment = Alignment(horizontal="center", vertical="center")
     cell.fill = f
 
     # F: Assigned
     cell = ws.cell(row=row, column=6, value=task.assigned_to)
     cell.font = Font(name=FONT_NAME, size=10, color=CLR_CHARCOAL)
-    cell.alignment = Alignment(horizontal="center")
+    cell.alignment = Alignment(horizontal="center", vertical="center")
     cell.fill = f
 
     # G: Start
     cell = ws.cell(row=row, column=7, value=_format_date(task.start_date))
     cell.font = Font(name=FONT_NAME, size=10, color=CLR_CHARCOAL)
-    cell.alignment = Alignment(horizontal="center")
+    cell.alignment = Alignment(horizontal="center", vertical="center")
     cell.fill = f
 
     # H: Due
@@ -186,13 +231,13 @@ def _write_task_row(
         color=CLR_RED if overdue else CLR_CHARCOAL,
         bold=overdue,
     )
-    cell.alignment = Alignment(horizontal="center")
+    cell.alignment = Alignment(horizontal="center", vertical="center")
     cell.fill = f
 
     # I: Description
-    cell = ws.cell(row=row, column=9, value=clean_text(task.description))
+    cell = ws.cell(row=row, column=9, value=description)
     cell.font = Font(name=FONT_NAME, size=10, color=CLR_CHARCOAL)
-    cell.alignment = Alignment(wrap_text=True, vertical="top")
+    cell.alignment = Alignment(wrap_text=True, vertical="center")
     cell.fill = f
 
     # Bottom hairline border
@@ -200,8 +245,10 @@ def _write_task_row(
     for c in range(1, OUT_COLS + 1):
         ws.cell(row=row, column=c).border = border
 
-    # Minimum row height — autofit isn't a thing in openpyxl, so set 22+
-    ws.row_dimensions[row].height = 22
+    # Auto-size row to the tallest wrapped column (Task or Description).
+    ws.row_dimensions[row].height = _row_height_for(
+        (task.name, "C"), (description, "I")
+    )
 
 
 def _write_checklist_block(ws: Worksheet, start_row: int, task: Task) -> int:
@@ -222,7 +269,7 @@ def _write_checklist_block(ws: Worksheet, start_row: int, task: Task) -> int:
     _apply_band(ws, row, CLR_CHK_BG)
     cell = ws.cell(row=row, column=3, value=f"    Checklist: {completed} of {total} complete")
     cell.font = Font(name=FONT_NAME, size=9, italic=True, color=CLR_GRAY_MED)
-    cell.alignment = Alignment(indent=2)
+    cell.alignment = Alignment(indent=2, vertical="center")
 
     # Item rows. We render in the stored order rather than recomputing
     # completed-first — the user's ordering is meaningful.
@@ -231,14 +278,16 @@ def _write_checklist_block(ws: Worksheet, start_row: int, task: Task) -> int:
     )
     for item in items:
         row += 1
-        ws.row_dimensions[row].height = 18
         _apply_band(ws, row, CLR_CHK_BG)
         for c in range(1, OUT_COLS + 1):
             ws.cell(row=row, column=c).border = border
         prefix = "[x]  " if item.completed else "[  ]  "
         cell = ws.cell(row=row, column=3, value=prefix + item.text)
         cell.font = Font(name=FONT_NAME, size=9, italic=True, color=CLR_GRAY_MED)
-        cell.alignment = Alignment(indent=3)
+        cell.alignment = Alignment(indent=3, wrap_text=True, vertical="center")
+        ws.row_dimensions[row].height = max(
+            18.0, _wrapped_lines(prefix + item.text, "C") * _LINE_HEIGHT_PT + 4
+        )
 
     return row + 1
 
@@ -270,7 +319,7 @@ def _write_summary(
 
 def _apply_page_setup(ws: Worksheet, last_row: int) -> None:
     ws.print_area = f"A1:{get_column_letter(OUT_COLS)}{last_row}"
-    ws.print_title_rows = "1:4"
+    ws.print_title_rows = "1:5"
     ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0  # unlimited vertical pages
@@ -283,7 +332,7 @@ def _apply_page_setup(ws: Worksheet, last_row: int) -> None:
     ws.page_margins.footer = 0.25
     ws.print_options.horizontalCentered = True
     ws.sheet_view.showGridLines = False
-    ws.freeze_panes = "A5"
+    ws.freeze_panes = "A6"
 
 
 def export_engagement(
@@ -326,15 +375,23 @@ def export_engagement(
     ws.title = sheet_name[:31]  # Excel limit
     ws.sheet_properties.tabColor = CLR_NAVY
 
+    # Bucket headers stay visible while the rows beneath them collapse.
+    ws.sheet_properties.outlinePr.summaryBelow = False
+
     for col, width in COL_WIDTHS.items():
         ws.column_dimensions[col].width = width
 
-    _write_title_block(ws, total_open=total_open, bucket_count=len(bucket_names))
+    _write_title_block(
+        ws,
+        client_name=engagement.name,
+        total_open=total_open,
+        bucket_count=len(bucket_names),
+    )
 
-    row = 5
+    row = 6
     for bucket_name in bucket_names:
-        row += 1
         _write_bucket_header(ws, row, bucket_name)
+        bucket_first_row = row + 1
         for idx, task in enumerate(by_bucket[bucket_name], start=1):
             row += 1
             fill_rgb = CLR_CREAM if idx % 2 == 0 else CLR_WHITE
@@ -344,10 +401,13 @@ def export_engagement(
             # Checklist sub-rows (if any)
             if total_checks(task) > 0:
                 row = _write_checklist_block(ws, row + 1, task) - 1
+        # Group every row beneath the bucket header so the bucket is collapsible.
+        for r in range(bucket_first_row, row + 1):
+            ws.row_dimensions[r].outline_level = 1
         row += 1
         ws.row_dimensions[row].height = 8  # spacer
+        row += 1
 
-    row += 1
     _write_summary(
         ws,
         row,

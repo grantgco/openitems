@@ -19,4 +19,4 @@ CLR_CHK_BG: Final[str] = "E8F4FD"
 CLR_SUBTOTAL: Final[str] = "E8E5E0"
 CLR_RED: Final[str] = "CC0000"
 
-FONT_NAME: Final[str] = "Calibri"
+FONT_NAME: Final[str] = "Noto Sans"
