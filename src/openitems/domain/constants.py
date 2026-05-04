@@ -3,7 +3,14 @@ from __future__ import annotations
 from typing import Final
 
 # Planner-equivalent fixed values.
-STATUSES: Final[tuple[str, ...]] = ("Not Started", "In Progress", "Completed")
+STATUSES: Final[tuple[str, ...]] = (
+    "Intake",
+    "In Progress",
+    "Deferred",
+    "Dropped",
+    "Resolved",
+    "Closed",
+)
 PRIORITIES: Final[tuple[str, ...]] = ("Low", "Medium", "Important", "Urgent")
 
 PRIORITY_RANK: Final[dict[str, int]] = {p: i for i, p in enumerate(PRIORITIES)}

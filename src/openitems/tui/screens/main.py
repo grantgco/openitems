@@ -94,6 +94,25 @@ class MainScreen(Screen):
         self._reload_active_engagement()
         self._focus_pane("items-pane")
         self._maybe_show_planning_banner()
+        # Promote any Resolved tasks past their hold window once an hour.
+        # First tick fires after the interval, not on mount — by design.
+        self.set_interval(3600, self._run_auto_close_sweep)
+
+    def _run_auto_close_sweep(self) -> None:
+        if not self._engagement_slug:
+            return
+        with session_scope() as s:
+            engagement = engagements.get_by_slug(s, self._engagement_slug)
+            if engagement is None:
+                return
+            promoted = tasks.sweep_auto_close(s, engagement)
+        if promoted:
+            self.app.notify(
+                f"Auto-closed {promoted} resolved item{'s' if promoted != 1 else ''}.",
+                title="Sweep",
+                timeout=4,
+            )
+            self._reload_active_engagement()
 
     def _maybe_show_planning_banner(self) -> None:
         """F16: nudge the user to plan the week if it's Monday and they haven't.

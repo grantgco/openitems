@@ -36,8 +36,23 @@ def test_create_task_with_bucket_get_or_creates(session):
 
 def test_engagement_create_seeds_default_workflow(session):
     e = _engagement(session)
-    names = [b.name for b in buckets.list_for(session, e)]
-    assert names == ["Backlog", "In Progress", "In Review", "Done"]
+    workflow = buckets.list_for(session, e)
+    names = [b.name for b in workflow]
+    assert names == [
+        "Intake",
+        "In Progress",
+        "Deferred",
+        "Dropped",
+        "Resolved",
+        "Closed",
+    ]
+    by_name = {b.name: b for b in workflow}
+    assert by_name["Resolved"].auto_close_after_days == 14
+    assert by_name["Resolved"].is_done_state is True
+    assert by_name["Closed"].is_done_state is True
+    assert by_name["Dropped"].is_done_state is True
+    assert by_name["Intake"].is_done_state is False
+    assert by_name["Deferred"].is_done_state is False
 
 
 def test_ensure_inbox_creates_once(session):
@@ -75,19 +90,20 @@ def test_ensure_inbox_handles_pre_existing_name_collision(session):
 
 def test_default_workflow_done_bucket_is_done_state(session):
     e = _engagement(session)
-    done = next(b for b in buckets.list_for(session, e) if b.name == "Done")
-    assert done.is_done_state is True
+    closed = next(b for b in buckets.list_for(session, e) if b.name == "Closed")
+    assert closed.is_done_state is True
+    assert closed.auto_close_after_days is None
 
 
-def test_move_to_engagement_lands_in_backlog(session):
+def test_move_to_engagement_lands_in_first_bucket(session):
     src = engagements.create(session, "Source")
     dst = engagements.create(session, "Dest")
     t = tasks.create(session, src, TaskInput(name="A", bucket_name="In Progress"))
     assert t.bucket is not None and t.bucket.name == "In Progress"
     tasks.move_to_engagement(session, t, dst)
     assert t.engagement_id == dst.id
-    # Lands in dest's Backlog (first bucket of seeded workflow).
-    assert t.bucket is not None and t.bucket.name == "Backlog"
+    # Lands in dest's first workflow stage (Intake).
+    assert t.bucket is not None and t.bucket.name == "Intake"
     # Source bucket reference is severed.
     assert t.bucket.engagement_id == dst.id
 
@@ -131,32 +147,36 @@ def test_default_bucket_assigned_when_unspecified(session):
     e = _engagement(session)  # seeds default workflow
     t = tasks.create(session, e, TaskInput(name="A"))
     assert t.bucket is not None
-    assert t.bucket.name == "Backlog"
+    assert t.bucket.name == "Intake"
 
 
-def test_advance_bucket_walks_workflow_and_marks_completed(session):
+def test_advance_bucket_walks_workflow_and_marks_done(session):
     e = _engagement(session)
     t = tasks.create(session, e, TaskInput(name="X"))
-    assert t.bucket and t.bucket.name == "Backlog"
-    tasks.advance_bucket(session, t)
-    assert t.bucket and t.bucket.name == "In Progress"
-    tasks.advance_bucket(session, t)
-    tasks.advance_bucket(session, t)
-    assert t.bucket and t.bucket.name == "Done"
+    assert t.bucket and t.bucket.name == "Intake"
+    expected = ["In Progress", "Deferred", "Dropped", "Resolved", "Closed"]
+    for name in expected:
+        tasks.advance_bucket(session, t)
+        assert t.bucket and t.bucket.name == name
     assert tasks.is_completed(t) is True
-    assert t.status == "Completed"
+    assert t.status == "Closed"
     # Already in last bucket — stays put
     tasks.advance_bucket(session, t)
-    assert t.bucket and t.bucket.name == "Done"
+    assert t.bucket and t.bucket.name == "Closed"
 
 
 def test_progress_summary_counts_done(session):
     e = _engagement(session)
     a = tasks.create(session, e, TaskInput(name="a"))
     b = tasks.create(session, e, TaskInput(name="b"))
-    tasks.advance_bucket(session, a)
-    tasks.advance_bucket(session, a)
-    tasks.advance_bucket(session, a)  # → Done
+    # Move a directly into the terminal Closed bucket.
+    tasks.update(
+        session,
+        a,
+        bucket_id=next(
+            x.id for x in buckets.list_for(session, e) if x.name == "Closed"
+        ),
+    )
     done, total = tasks.progress_summary([a, b])
     assert (done, total) == (1, 2)
 
@@ -174,7 +194,7 @@ def test_is_late_only_when_overdue_and_open(session):
         session,
         e,
         TaskInput(
-            name="C", due_date=today - timedelta(days=2), bucket_name="Done"
+            name="C", due_date=today - timedelta(days=2), bucket_name="Closed"
         ),
     )
     assert tasks.is_late(overdue, today) is True
@@ -199,11 +219,95 @@ def test_soft_delete_and_undo_via_audit_stack(session):
 
 
 def test_cycle_status_and_priority_wrap():
-    assert cycle_status("Not Started") == "In Progress"
-    assert cycle_status("In Progress") == "Completed"
-    assert cycle_status("Completed") == "Not Started"
+    assert cycle_status("Intake") == "In Progress"
+    assert cycle_status("Closed") == "Intake"  # wraps
+    assert cycle_status("not-a-status") == "Intake"
     assert cycle_priority("Urgent") == "Low"
     assert cycle_priority("Medium") == "Important"
+
+
+def _bucket_id(session, e, name: str) -> str:
+    return next(b.id for b in buckets.list_for(session, e) if b.name == name)
+
+
+def test_resolved_at_stamped_on_entry_and_cleared_on_reopen(session):
+    e = _engagement(session)
+    t = tasks.create(session, e, TaskInput(name="X"))
+    tasks.update(session, t, bucket_id=_bucket_id(session, e, "Resolved"))
+    assert t.status == "Resolved"
+    assert t.resolved_at is not None
+    first_stamp = t.resolved_at
+
+    # Reopen → stamp clears.
+    tasks.update(session, t, bucket_id=_bucket_id(session, e, "In Progress"))
+    assert t.status == "In Progress"
+    assert t.resolved_at is None
+
+    # Re-resolve → stamp re-applies (clock starts over).
+    tasks.update(session, t, bucket_id=_bucket_id(session, e, "Resolved"))
+    assert t.resolved_at is not None
+    assert t.resolved_at >= first_stamp
+
+
+def test_status_mapping_for_each_default_bucket(session):
+    from openitems.domain.tasks import _sync_status_with_bucket
+
+    e = _engagement(session)
+    for bucket_name, expected_status in [
+        ("Intake", "Intake"),
+        ("In Progress", "In Progress"),
+        ("Deferred", "Deferred"),
+        ("Dropped", "Dropped"),
+        ("Resolved", "Resolved"),
+        ("Closed", "Closed"),
+    ]:
+        t = tasks.create(session, e, TaskInput(name=f"t-{bucket_name}"))
+        t.bucket = next(b for b in buckets.list_for(session, e) if b.name == bucket_name)
+        t.bucket_id = t.bucket.id
+        _sync_status_with_bucket(t)
+        assert t.status == expected_status, bucket_name
+
+
+def test_sweep_promotes_after_ttl(session):
+    from datetime import UTC, datetime, timedelta
+
+    e = _engagement(session)
+    t = tasks.create(session, e, TaskInput(name="X"))
+    tasks.update(session, t, bucket_id=_bucket_id(session, e, "Resolved"))
+    assert t.status == "Resolved"
+
+    # Pretend resolved_at was 15 days ago (TTL is 14).
+    t.resolved_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=15)
+    session.flush()
+
+    promoted = tasks.sweep_auto_close(session, e)
+    assert promoted == 1
+    assert t.bucket and t.bucket.name == "Closed"
+    assert t.status == "Closed"
+    assert t.resolved_at is None
+
+
+def test_sweep_noop_before_ttl(session):
+    e = _engagement(session)
+    t = tasks.create(session, e, TaskInput(name="X"))
+    tasks.update(session, t, bucket_id=_bucket_id(session, e, "Resolved"))
+    promoted = tasks.sweep_auto_close(session, e)
+    assert promoted == 0
+    assert t.bucket and t.bucket.name == "Resolved"
+
+
+def test_sweep_skips_soft_deleted(session):
+    from datetime import UTC, datetime, timedelta
+
+    e = _engagement(session)
+    t = tasks.create(session, e, TaskInput(name="X"))
+    tasks.update(session, t, bucket_id=_bucket_id(session, e, "Resolved"))
+    t.resolved_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
+    tasks.soft_delete(session, t)
+    session.flush()
+    promoted = tasks.sweep_auto_close(session, e)
+    assert promoted == 0
+    assert t.bucket and t.bucket.name == "Resolved"
 
 
 def test_checklist_add_toggle_counts(session):

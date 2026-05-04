@@ -49,6 +49,10 @@ class Bucket(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_done_state: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # When set, tasks in this bucket get stamped with `Task.resolved_at`
+    # and the hourly sweep promotes them to the next workflow stage once
+    # `resolved_at + auto_close_after_days` has passed.
+    auto_close_after_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     engagement: Mapped[Engagement] = relationship(back_populates="buckets")
     tasks: Mapped[list[Task]] = relationship(back_populates="bucket")
@@ -67,7 +71,7 @@ class Task(Base):
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     priority: Mapped[str] = mapped_column(String(32), default="Medium", nullable=False)
-    status: Mapped[str] = mapped_column(String(32), default="Not Started", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="Intake", nullable=False)
     assigned_to: Mapped[str] = mapped_column(String(200), default="", nullable=False)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -75,6 +79,9 @@ class Task(Base):
     external_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     external_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     focus_week: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Set when the task enters a bucket with `auto_close_after_days`. Cleared
+    # when it leaves. Drives the auto-close sweep and the "closes in Xd" chip.
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False

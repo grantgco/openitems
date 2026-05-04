@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 
+import humanize
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -10,7 +11,7 @@ from textual.widgets import DataTable, Label
 
 from openitems.db.models import Task
 from openitems.domain.dates import start_of_week
-from openitems.domain.tasks import is_late
+from openitems.domain.tasks import auto_close_at, is_late
 from openitems.tui import palette
 from openitems.tui.widgets.task_format import format_due, format_priority, format_tags
 
@@ -61,6 +62,15 @@ class ItemsPane(Vertical):
                 name_cell.append(" ★", style=palette.ACCENT)
             if note_count:
                 name_cell.append(f"  ✎{note_count}", style=palette.DIM)
+            close_at = auto_close_at(task)
+            if close_at is not None:
+                delta = close_at - datetime.now(UTC).replace(tzinfo=None)
+                chip = (
+                    f"  ⏳ closes {humanize.naturaldelta(delta)}"
+                    if delta.total_seconds() > 0
+                    else "  ⏳ closes any moment"
+                )
+                name_cell.append(chip, style=palette.DIM)
             self.table.add_row(
                 Text(str(idx).rjust(3), style=palette.DIM),
                 name_cell,

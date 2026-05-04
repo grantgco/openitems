@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -17,7 +17,7 @@ class TaskInput:
     name: str
     description: str = ""
     priority: str = "Medium"
-    status: str = "Not Started"
+    status: str = "Intake"
     assigned_to: str = ""
     start_date: date | None = None
     due_date: date | None = None
@@ -25,16 +25,18 @@ class TaskInput:
     bucket_name: str | None = None
 
 
+_DONE_STATUSES = frozenset({"Dropped", "Resolved", "Closed"})
+
+
 def is_completed(task: Task) -> bool:
     """A task is completed if its bucket is a done-state bucket.
 
     Bucket is the workflow primary signal — `status` mirrors it (and is kept
-    in sync by ``_sync_status_with_bucket``) so the existing `.xlsx` exporter,
-    which filters on `status=='Completed'`, keeps working.
+    in sync by ``_sync_status_with_bucket``).
     """
     if task.bucket is not None and task.bucket.is_done_state:
         return True
-    return task.status == "Completed"
+    return task.status in _DONE_STATUSES
 
 
 def is_late(task: Task, today: date | None = None) -> bool:
@@ -85,16 +87,46 @@ def _validate(input: TaskInput) -> None:
         raise ValueError(f"Status must be one of {STATUSES}")
 
 
-def _sync_status_with_bucket(task: Task) -> None:
-    """Keep ``task.status`` consistent with the workflow stage.
+_NON_DONE_NAME_HINTS: tuple[str, ...] = ("Intake", "In Progress", "Deferred")
 
-    - Bucket is a done-state → status = "Completed"
-    - Otherwise: leave existing status unless it was "Completed" (then bump to
-      "In Progress" so the export and overdue logic don't trip).
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _sync_status_with_bucket(task: Task) -> None:
+    """Keep ``task.status`` consistent with the workflow stage and stamp/clear
+    ``resolved_at`` when crossing into or out of an auto-close bucket.
+
+    Bucket flags drive the status string:
+      - ``auto_close_after_days`` set → "Resolved" (stamp ``resolved_at`` if null)
+      - ``is_done_state`` and bucket name is "Dropped" → "Dropped"
+      - ``is_done_state`` otherwise → "Closed"
+      - non-done bucket whose name matches a known status verbatim → that name
+      - otherwise: keep status if still in STATUSES, else reset to "In Progress"
     """
-    if task.bucket is not None and task.bucket.is_done_state:
-        task.status = "Completed"
-    elif task.status == "Completed":
+    bucket = task.bucket
+    if bucket is not None and bucket.auto_close_after_days is not None:
+        task.status = "Resolved"
+        if task.resolved_at is None:
+            task.resolved_at = _utcnow()
+        return
+
+    # Anywhere else: leaving (or never entering) a hold bucket clears the stamp.
+    task.resolved_at = None
+
+    if bucket is not None and bucket.is_done_state:
+        task.status = "Dropped" if bucket.name.strip().lower() == "dropped" else "Closed"
+        return
+
+    if bucket is not None:
+        match = bucket.name.strip().lower()
+        for hint in _NON_DONE_NAME_HINTS:
+            if hint.lower() == match:
+                task.status = hint
+                return
+
+    if task.status not in STATUSES:
         task.status = "In Progress"
 
 
@@ -234,6 +266,51 @@ def advance_bucket(session: Session, task: Task) -> Task:
     return task
 
 
+def sweep_auto_close(
+    session: Session,
+    engagement: Engagement,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Promote tasks past their hold window to the next workflow stage.
+
+    Looks for live tasks in any bucket with ``auto_close_after_days`` set,
+    where ``resolved_at + days`` is in the past, and advances each via
+    ``advance_bucket``. Returns the number promoted. Idempotent.
+    """
+    from openitems.domain import buckets as buckets_mod
+
+    now = now or _utcnow()
+    stmt = (
+        select(Task)
+        .join(Bucket, Task.bucket_id == Bucket.id)
+        .where(
+            Task.engagement_id == engagement.id,
+            Task.deleted_at.is_(None),
+            Bucket.auto_close_after_days.is_not(None),
+            Task.resolved_at.is_not(None),
+        )
+        .options(selectinload(Task.bucket))
+    )
+    promoted = 0
+    for task in session.scalars(stmt):
+        bucket = task.bucket
+        if bucket is None or bucket.auto_close_after_days is None or task.resolved_at is None:
+            continue
+        if task.resolved_at + timedelta(days=bucket.auto_close_after_days) > now:
+            continue
+        next_bucket = buckets_mod.next_in_workflow(session, engagement, bucket)
+        if next_bucket is None or next_bucket.id == bucket.id:
+            continue
+        task.bucket_id = next_bucket.id
+        task.bucket = next_bucket
+        _sync_status_with_bucket(task)
+        promoted += 1
+    if promoted:
+        session.flush()
+    return promoted
+
+
 def soft_delete(session: Session, task: Task) -> None:
     task.deleted_at = datetime.now(UTC).replace(tzinfo=None)
 
@@ -249,6 +326,18 @@ def overdue_count(tasks: Iterable[Task], today: date | None = None) -> int:
 
 def high_priority_count(tasks: Iterable[Task]) -> int:
     return sum(1 for t in tasks if t.priority in {"Important", "Urgent"})
+
+
+def auto_close_at(task: Task) -> datetime | None:
+    """Return the moment a Resolved task will auto-promote, or None."""
+    bucket = task.bucket
+    if (
+        bucket is None
+        or bucket.auto_close_after_days is None
+        or task.resolved_at is None
+    ):
+        return None
+    return task.resolved_at + timedelta(days=bucket.auto_close_after_days)
 
 
 def completed_checks(task: Task) -> int:

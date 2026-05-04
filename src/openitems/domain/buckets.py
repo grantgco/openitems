@@ -17,11 +17,16 @@ from openitems.db.models import Bucket, Engagement
 
 # Default workflow seeded into every new engagement. The user can rename,
 # reorder, or add stages later — these are just sensible starting points.
-DEFAULT_WORKFLOW: Final[tuple[tuple[str, bool], ...]] = (
-    ("Backlog", False),
-    ("In Progress", False),
-    ("In Review", False),
-    ("Done", True),
+# (name, is_done_state, auto_close_after_days). When auto_close_after_days
+# is set, tasks entering that bucket get stamped with `resolved_at` and the
+# hourly sweep promotes them to the next bucket once the timer expires.
+DEFAULT_WORKFLOW: Final[tuple[tuple[str, bool, int | None], ...]] = (
+    ("Intake", False, None),
+    ("In Progress", False, None),
+    ("Deferred", False, None),
+    ("Dropped", True, None),
+    ("Resolved", True, 14),
+    ("Closed", True, None),
 )
 
 
@@ -57,12 +62,13 @@ def seed_default_workflow(session: Session, engagement: Engagement) -> list[Buck
     if list_for(session, engagement):
         return []
     out: list[Bucket] = []
-    for idx, (name, is_done) in enumerate(DEFAULT_WORKFLOW):
+    for idx, (name, is_done, auto_close_days) in enumerate(DEFAULT_WORKFLOW):
         bucket = Bucket(
             engagement_id=engagement.id,
             name=name,
             sort_order=idx,
             is_done_state=is_done,
+            auto_close_after_days=auto_close_days,
         )
         session.add(bucket)
         out.append(bucket)

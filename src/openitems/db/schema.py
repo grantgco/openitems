@@ -63,6 +63,16 @@ def _apply_lightweight_migrations() -> None:
                     text("ALTER TABLE engagement ADD COLUMN homepage_url TEXT")
                 )
 
+    if "bucket" in table_names:
+        cols = {c["name"] for c in insp.get_columns("bucket")}
+        if "auto_close_after_days" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE bucket ADD COLUMN auto_close_after_days INTEGER"
+                    )
+                )
+
     if "task" in table_names:
         cols = {c["name"] for c in insp.get_columns("task")}
         if "external_url" not in cols:
@@ -75,3 +85,21 @@ def _apply_lightweight_migrations() -> None:
                 conn.execute(
                     text("ALTER TABLE task ADD COLUMN focus_week DATE")
                 )
+        if "resolved_at" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE task ADD COLUMN resolved_at DATETIME")
+                )
+        # One-shot remap of legacy status strings into the new vocabulary.
+        # Idempotent: the WHERE clause is empty after the first run.
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE task SET status='Intake' WHERE status='Not Started'"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE task SET status='Closed' WHERE status='Completed'"
+                )
+            )

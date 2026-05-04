@@ -51,20 +51,30 @@ def _seed(session, today: date):
         TaskInput(
             name="Doc: env var matrix",
             priority="Low",
-            status="Not Started",
+            status="Intake",
             due_date=today + timedelta(days=30),
             labels=["docs"],
             bucket_name="Design",
         ),
     )
-    # "Done" is one of the seeded workflow buckets and is a done-state.
+    # "Closed" is one of the seeded workflow buckets and is a done-state.
     tasks.create(
         session,
         e,
         TaskInput(
             name="Old completed thing",
             priority="Low",
-            bucket_name="Done",
+            bucket_name="Closed",
+        ),
+    )
+    # A Resolved task — also a done-state, also excluded from the export.
+    tasks.create(
+        session,
+        e,
+        TaskInput(
+            name="Held in resolved",
+            priority="Low",
+            bucket_name="Resolved",
         ),
     )
     return e
