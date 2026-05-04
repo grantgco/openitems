@@ -49,3 +49,26 @@ def test_legacy_status_strings_remapped(tmp_path: Path) -> None:
     with eng.begin() as conn:
         rows = dict(conn.execute(text("SELECT id, status FROM task")).all())
     assert rows == {"t1": "Intake", "t2": "Closed", "t3": "Intake"}
+
+
+def test_status_remap_skips_writes_when_no_legacy_rows(tmp_path: Path, monkeypatch) -> None:
+    """Once all rows are on the new vocabulary the remap should not issue
+    UPDATEs on every launch — it gates on a SELECT 1 first."""
+    db = tmp_path / "fresh.db"
+    engine_mod.reset_for_tests(db)
+    init_schema()  # fresh DB — no legacy rows present
+
+    captured: list[str] = []
+    from openitems.db import schema as schema_mod
+
+    real_text = schema_mod.text
+
+    def spy_text(stmt: str):
+        captured.append(stmt)
+        return real_text(stmt)
+
+    monkeypatch.setattr(schema_mod, "text", spy_text)
+    init_schema()
+
+    update_calls = [s for s in captured if s.lstrip().upper().startswith("UPDATE TASK SET STATUS=")]
+    assert update_calls == []

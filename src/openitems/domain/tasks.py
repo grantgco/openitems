@@ -332,15 +332,20 @@ def distinct_labels(session: Session, engagement: Engagement) -> list[str]:
     """Return all distinct tag labels used on live tasks in ``engagement``.
 
     Sorted case-insensitively. When the same tag appears with different
-    casing across tasks, the most-recently-flushed casing wins — that
-    casing is what the autocomplete will suggest, so the next save
-    keeps the user's existing convention rather than imposing a new one.
+    casing across tasks, the casing on the most-recently-updated task
+    wins — that casing is what the autocomplete will suggest, so the
+    next save keeps the user's existing convention rather than imposing
+    a new one.
     """
+    # ASC order — later rows overwrite earlier ones in `seen`, so the
+    # newest `updated_at` ends up as the canonical casing.
     rows = session.scalars(
-        select(Task.labels).where(
+        select(Task.labels)
+        .where(
             Task.engagement_id == engagement.id,
             Task.deleted_at.is_(None),
         )
+        .order_by(Task.updated_at.asc())
     )
     seen: dict[str, str] = {}
     for raw in rows:
@@ -349,6 +354,16 @@ def distinct_labels(session: Session, engagement: Engagement) -> list[str]:
             if cf:
                 seen[cf] = label
     return sorted(seen.values(), key=lambda s: s.casefold())
+
+
+def is_in_auto_close(task: Task) -> bool:
+    """True when the task is sitting in a settling bucket waiting to close.
+
+    These rows are still actionable in the user's mental model — they're
+    aging out, not gone — so the items pane keeps them visible (with the
+    countdown chip) even though ``is_completed`` returns True.
+    """
+    return task.bucket is not None and task.bucket.auto_close_after_days is not None
 
 
 def auto_close_at(task: Task) -> datetime | None:

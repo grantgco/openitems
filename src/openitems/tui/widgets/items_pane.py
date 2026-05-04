@@ -66,7 +66,7 @@ class ItemsPane(Vertical):
             if close_at is not None:
                 delta = close_at - datetime.now(UTC).replace(tzinfo=None)
                 chip = (
-                    f"  ⏳ closes {humanize.naturaldelta(delta)}"
+                    f"  ⏳ closes in {humanize.naturaldelta(delta)}"
                     if delta.total_seconds() > 0
                     else "  ⏳ closes any moment"
                 )

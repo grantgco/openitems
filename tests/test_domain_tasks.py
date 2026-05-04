@@ -310,6 +310,34 @@ def test_sweep_skips_soft_deleted(session):
     assert t.bucket and t.bucket.name == "Resolved"
 
 
+def test_is_in_auto_close_flags_settling_buckets(session):
+    e = _engagement(session)
+    open_t = tasks.create(session, e, TaskInput(name="open"))
+    closed_t = tasks.create(session, e, TaskInput(name="closed", bucket_name="Closed"))
+    resolved_t = tasks.create(session, e, TaskInput(name="resolved", bucket_name="Resolved"))
+    assert tasks.is_in_auto_close(open_t) is False
+    assert tasks.is_in_auto_close(closed_t) is False
+    assert tasks.is_in_auto_close(resolved_t) is True
+
+
+def test_distinct_labels_picks_most_recently_updated_casing(session):
+    from datetime import UTC, datetime, timedelta
+
+    e = _engagement(session)
+    older = tasks.create(session, e, TaskInput(name="older", labels=["api"]))
+    newer = tasks.create(session, e, TaskInput(name="newer", labels=["API"]))
+    # Force a deterministic ordering: distinct_labels does ORDER BY
+    # updated_at ASC and lets later rows overwrite the casing dict, so
+    # the newest updated_at ends up canonical.
+    now = datetime.now(UTC).replace(tzinfo=None)
+    older.updated_at = now - timedelta(days=1)
+    newer.updated_at = now
+    session.flush()
+
+    out = tasks.distinct_labels(session, e)
+    assert out == ["API"]
+
+
 def test_distinct_labels_dedupes_case_insensitively(session):
     e = _engagement(session)
     tasks.create(session, e, TaskInput(name="A", labels=["api", "Sec"]))

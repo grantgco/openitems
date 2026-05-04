@@ -91,15 +91,26 @@ def _apply_lightweight_migrations() -> None:
                     text("ALTER TABLE task ADD COLUMN resolved_at DATETIME")
                 )
         # One-shot remap of legacy status strings into the new vocabulary.
-        # Idempotent: the WHERE clause is empty after the first run.
+        # Gated by an existence probe so the UPDATEs only fire on a DB
+        # that actually predates the rename — every subsequent launch is
+        # a single SELECT, not two writes.
         with engine.begin() as conn:
-            conn.execute(
+            has_legacy = conn.execute(
                 text(
-                    "UPDATE task SET status='Intake' WHERE status='Not Started'"
+                    "SELECT 1 FROM task "
+                    "WHERE status IN ('Not Started', 'Completed') LIMIT 1"
                 )
-            )
-            conn.execute(
-                text(
-                    "UPDATE task SET status='Closed' WHERE status='Completed'"
+            ).first()
+            if has_legacy:
+                conn.execute(
+                    text(
+                        "UPDATE task SET status='Intake' "
+                        "WHERE status='Not Started'"
+                    )
                 )
-            )
+                conn.execute(
+                    text(
+                        "UPDATE task SET status='Closed' "
+                        "WHERE status='Completed'"
+                    )
+                )

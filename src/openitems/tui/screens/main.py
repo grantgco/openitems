@@ -21,6 +21,7 @@ from openitems.domain.search import TaskFilter, apply
 from openitems.domain.tasks import (
     high_priority_count,
     is_completed,
+    is_in_auto_close,
     overdue_count,
     progress_summary,
 )
@@ -160,6 +161,13 @@ class MainScreen(Screen):
                 return
             all_tasks = tasks.list_for(s, engagement, include_completed=True)
             open_tasks = [t for t in all_tasks if not is_completed(t)]
+            # Resolved tasks are technically completed but still aging out —
+            # surface them in the default view so the user sees the
+            # countdown chip without having to navigate to that bucket.
+            visible_default = [
+                t for t in all_tasks
+                if not is_completed(t) or is_in_auto_close(t)
+            ]
             today = date.today()
 
             workflow = buckets_mod.list_for(s, engagement)
@@ -203,14 +211,14 @@ class MainScreen(Screen):
                     "focus_only": self._filter.focus_only,
                 },
             )
-            # Default visible set: hide done-state buckets unless the user
-            # explicitly filtered to one. Otherwise the open-items view stays
-            # focused on what actually needs attention.
+            # Default visible set: open + Resolved (auto-close) tasks. Hide
+            # terminal done buckets (Closed, Dropped) unless the user
+            # explicitly filtered to one.
             base = (
                 all_tasks
                 if self._filter.bucket_name
                 and any(b.name == self._filter.bucket_name and b.is_done_state for b in workflow)
-                else open_tasks
+                else visible_default
             )
             visible = apply(self._filter, base)
             self.items_pane.populate(visible, today=today)
