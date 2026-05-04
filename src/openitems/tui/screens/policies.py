@@ -31,6 +31,7 @@ class PoliciesScreen(Screen):
         Binding("a", "new_policy", "add"),
         Binding("e", "edit_policy", "edit"),
         Binding("d", "delete_policy", "delete"),
+        Binding("i", "import_csv", "import csv"),
         Binding("j", "move_down", "down", show=False),
         Binding("k", "move_up", "up", show=False),
         Binding("g", "top", "top", show=False),
@@ -175,6 +176,15 @@ class PoliciesScreen(Screen):
         self.app.notify("Policy deleted.")
         self.reload()
 
+    def action_import_csv(self) -> None:
+        from openitems.tui.screens.import_policies import ImportPoliciesScreen
+
+        def _after(result: bool) -> None:
+            if result:
+                self.reload()
+
+        self.app.push_screen(ImportPoliciesScreen(self.engagement_slug), _after)
+
     def action_all_policies(self) -> None:
         from openitems.tui.screens.all_policies import AllPoliciesScreen
 
@@ -260,6 +270,7 @@ def _status_keys() -> str:
             "[b]a[/b] add",
             "[b]e[/b]/Enter edit",
             "[b]d[/b] delete",
+            "[b]i[/b] import csv",
             "[b]R[/b] all engagements",
             "[b]Esc[/b] back",
         ]

@@ -67,6 +67,12 @@ The output mirrors the legacy VBA macro (`modOpenItemsList.bas`):
 - Print setup: landscape, fit-to-width, frozen title rows, 0.5"/0.4" margins
 - Tasks with status `Completed` and soft-deleted tasks are excluded
 
+## Importing policies
+
+From the policies view (`P` from the main screen), press `i` to bulk-import policies into the active engagement from a CSV file. The wizard previews every row classified as **new / duplicate / error** before any insert. Duplicates are detected by case-insensitive `(carrier, policy_number)` within the engagement, so re-running the same import is safe.
+
+A starter template ships with the package — use the `Save template…` button on step 1 to drop a copy at a path of your choosing, or grab it directly from `src/openitems/examples/policies-import-template.csv`.
+
 ## Data model
 
 - **Engagements** — top-level workspaces. The active one shows in the titlebar.

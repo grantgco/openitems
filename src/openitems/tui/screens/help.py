@@ -18,6 +18,8 @@ _HELP = """[b]navigation[/b]
   n                   add note to selected task
   i                   jot — brain-dump into Inbox
   L                   activity log (all notes, this engagement)
+                      └ enter on a note row in the task/policy editor,
+                        or v in the activity log, to read the full body
   M                   move task to another engagement
   d                   soft-delete
   u                   undo last delete
@@ -35,6 +37,7 @@ _HELP = """[b]navigation[/b]
   A                   "my plate" — open items across every engagement
   P                   policies for the active engagement
   R                   renewal radar — policies across every engagement
+  i (on policies)     import policies from a CSV file
   o                   open active engagement URL in browser
   O                   open selected task's external URL in browser
   ?                   this help

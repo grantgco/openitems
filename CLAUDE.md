@@ -50,7 +50,7 @@ We use `Base.metadata.create_all` plus a tiny additive migration block in `db/sc
 
 ## Textual pitfalls (from incidents)
 
-- **Don't name an instance attribute `_task`** on a `Widget`/`MessagePump` subclass — Textual stores its asyncio task at `self._task` and you'll clobber it, crashing the message loop with a baffling `TypeError: An asyncio.Future, a coroutine or an awaitable is required` from `gather(...)`. We use `_current_task` etc.
+- **Don't name an instance attribute `_task`** on a `Widget`/`MessagePump` subclass — Textual stores its asyncio task at `self._task` and you'll clobber it, crashing the message loop with a baffling `TypeError: An asyncio.Future, a coroutine or an awaitable is required` from `gather(...)`. We use `_current_task` etc. The same trap applies to `_context` (a `MessagePump` method); shadowing it surfaces as `TypeError: 'str' object is not callable` from `_process_messages`. Pick disambiguated names (e.g. `_context_label`).
 - **Don't define a custom `Changed` message on an `Input` subclass.** Shadowing `Input.Changed` breaks the parent's auto-post (wrong `__init__` signature). Instead, listen for `Input.Changed` directly with a CSS selector: `@on(Input.Changed, "#filter-bar")`.
 - **DataTable columns must be set up idempotently.** Mount-order issues bit us once. The pattern in `widgets/items_pane.py::_ensure_columns` is the reference.
 - **`screen._option_list.focus()`** — pane focus is implemented manually because Textual's tab focus order doesn't map cleanly onto our three-pane layout. See `MainScreen._focus_pane`.

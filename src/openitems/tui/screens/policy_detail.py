@@ -118,8 +118,12 @@ class PolicyDetailScreen(ModalScreen[bool]):
 
     def _refresh_notes(self, policy: Policy) -> None:
         self.note_options.clear_options()
+        # Snapshot displayed notes so the viewer modal can render full
+        # bodies without re-querying once the session below closes.
+        self._note_bodies: dict[str, tuple[str, str, datetime]] = {}
         now = datetime.now(UTC).replace(tzinfo=None)
         for n in policy_notes.list_for(policy):
+            self._note_bodies[n.id] = (n.body, n.kind, n.created_at)
             relative = humanize.naturaltime(now - n.created_at)
             preview = n.body.replace("\n", " | ")
             if len(preview) > 80:
@@ -128,6 +132,19 @@ class PolicyDetailScreen(ModalScreen[bool]):
             self.note_options.add_option(
                 Option(f"{glyph}  {relative}  ·  {preview}", id=n.id)
             )
+
+    @on(OptionList.OptionSelected, "#note-options")
+    def _view_note(self, event: OptionList.OptionSelected) -> None:
+        nid = event.option.id
+        payload = self._note_bodies.get(nid) if nid else None
+        if payload is None:
+            return
+        body, kind, created_at = payload
+        from openitems.tui.screens.note_viewer import NoteViewerScreen
+
+        self.app.push_screen(
+            NoteViewerScreen(body=body, kind=kind, created_at=created_at)
+        )
 
     @on(Input.Submitted, "#note-add")
     def _add_note(self, event: Input.Submitted) -> None:

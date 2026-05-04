@@ -56,6 +56,7 @@ class ActivityLogScreen(ModalScreen[str | None]):
     BINDINGS = [
         Binding("escape", "dismiss_no_pick", "close", show=False),
         Binding("enter", "pick", "open task", show=False),
+        Binding("v", "view_note", "view full note", show=False),
     ]
 
     def __init__(self, engagement_slug: str) -> None:
@@ -65,11 +66,17 @@ class ActivityLogScreen(ModalScreen[str | None]):
         self._option_list = OptionList(id="activity-options")
         # task_id lookup keyed by note_id, populated in _refresh()
         self._note_to_task: dict[str, str] = {}
+        # Full-body snapshot so the viewer modal works after the session
+        # used to load `rows` is closed.
+        self._note_bodies: dict[str, tuple[str, str, datetime, str]] = {}
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(classes="modal"):
             yield Label("[b]activity log[/b]", classes="modal-title", id="activity-title")
-            yield Label("[dim]press Enter to open the task · Esc to close[/dim]", classes="dim")
+            yield Label(
+                "[dim]Enter: open task  ·  v: view full note  ·  Esc: close[/dim]",
+                classes="dim",
+            )
             yield self._option_list
 
     def on_mount(self) -> None:
@@ -87,6 +94,15 @@ class ActivityLogScreen(ModalScreen[str | None]):
             rows = notes_mod.list_for_engagement(s, engagement)
             options = self._build_options(rows)
             self._note_to_task = {n.id: n.task_id for n in rows}
+            self._note_bodies = {
+                n.id: (
+                    n.body,
+                    n.kind,
+                    n.created_at,
+                    n.task.name if n.task is not None else "",
+                )
+                for n in rows
+            }
 
         title_widget = self.query_one("#activity-title", Label)
         title_widget.update(
@@ -121,6 +137,28 @@ class ActivityLogScreen(ModalScreen[str | None]):
 
     def action_pick(self) -> None:
         self._pick_highlighted()
+
+    def action_view_note(self) -> None:
+        idx = self._option_list.highlighted
+        if idx is None:
+            return
+        option = self._option_list.get_option_at_index(idx)
+        if option.id is None:
+            return
+        payload = self._note_bodies.get(option.id)
+        if payload is None:
+            return
+        body, kind, created_at, task_name = payload
+        from openitems.tui.screens.note_viewer import NoteViewerScreen
+
+        self.app.push_screen(
+            NoteViewerScreen(
+                body=body,
+                kind=kind,
+                created_at=created_at,
+                context=task_name,
+            )
+        )
 
     @on(OptionList.OptionSelected, "#activity-options")
     def _on_select(self, event: OptionList.OptionSelected) -> None:

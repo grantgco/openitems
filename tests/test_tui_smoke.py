@@ -155,6 +155,46 @@ async def test_detail_modal_adds_note(app_environment):
 
 
 @pytest.mark.asyncio
+async def test_selecting_note_opens_full_viewer(app_environment):
+    """Selecting a note row in the task detail modal should push a
+    NoteViewerScreen with the full body — that's the only path to read a
+    long note in full (the OptionList row truncates at 80 chars)."""
+    from sqlalchemy import select
+
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Task
+    from openitems.domain import notes as notes_mod
+    from openitems.tui.app import OpenItemsApp
+    from openitems.tui.screens.note_viewer import NoteViewerScreen
+    from openitems.tui.screens.task_detail import TaskDetailScreen
+
+    long_body = (
+        "Talked with the carrier about the renewal. "
+        "They want updated payroll figures for the next quarter "
+        "before they'll quote — follow up Tuesday."
+    )
+    with session_scope() as s:
+        task = s.get(Task, s.scalars(select(Task.id)).first())
+        notes_mod.add(s, task, long_body, kind="meeting")
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        with session_scope() as s:
+            tid = s.scalars(select(Task.id)).first()
+        await app.push_screen(TaskDetailScreen(tid))
+        await pilot.pause()
+        screen = app.screen
+        # Highlight the (only) note option and trigger Enter.
+        screen.note_options.focus()
+        screen.note_options.highlighted = 0
+        screen.note_options.action_select()
+        await pilot.pause()
+        assert isinstance(app.screen, NoteViewerScreen)
+        assert app.screen._body == long_body
+
+
+@pytest.mark.asyncio
 async def test_detail_modal_saves_due_date_via_ctrl_s(app_environment):
     from datetime import date
 
@@ -551,3 +591,58 @@ async def test_help_modal_opens_and_closes(app_environment):
         await pilot.press("escape")
         await pilot.pause()
         assert app.screen.__class__.__name__ == "MainScreen"
+
+
+@pytest.mark.asyncio
+async def test_policies_import_csv_round_trip(app_environment, tmp_path):
+    """End-to-end: P → i opens the import wizard, walks through preview and
+    confirm, and inserts new policies into the active engagement."""
+    from sqlalchemy import select
+
+    from openitems.db.engine import session_scope
+    from openitems.db.models import Engagement, Policy
+    from openitems.tui.app import OpenItemsApp
+
+    csv_path = tmp_path / "policies.csv"
+    csv_path.write_text(
+        "name,carrier,coverage,policy_number,effective_date,expiration_date,location,description\n"
+        "Main GL,Travelers,GL,GL-9001,2026-01-01,2027-01-01,HQ,Primary\n"
+        "WC,Hartford,WC,WC-1,2026-03-15,2027-03-14,,\n"
+        "Bad date,Liberty,Auto,A-1,not-a-date,,,\n",
+        encoding="utf-8",
+    )
+
+    app = OpenItemsApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("P")
+        await pilot.pause()
+        assert app.screen.__class__.__name__ == "PoliciesScreen"
+
+        await pilot.press("i")
+        await pilot.pause()
+        assert app.screen.__class__.__name__ == "ImportPoliciesScreen"
+
+        wizard = app.screen
+        wizard.path_input.value = str(csv_path)
+        wizard.action_next()  # step 1 → 2
+        await pilot.pause()
+        assert wizard.step == 2
+        assert wizard._preview is not None
+        assert wizard._preview.new_count == 2
+        assert wizard._preview.error_count == 1
+
+        wizard.action_next()  # step 2 → 3
+        await pilot.pause()
+        assert wizard.step == 3
+        wizard.action_next()  # commit
+        await pilot.pause()
+        assert app.screen.__class__.__name__ == "PoliciesScreen"
+
+    with session_scope() as s:
+        engagement = s.scalars(select(Engagement)).first()
+        rows = s.scalars(
+            select(Policy).where(Policy.engagement_id == engagement.id)
+        ).all()
+        names = sorted(p.name for p in rows)
+        assert names == ["Main GL", "WC"]

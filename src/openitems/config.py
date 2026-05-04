@@ -35,6 +35,7 @@ class Config:
     export_prefs: dict[str, ExportPrefs] = field(default_factory=dict)
     db_path: str | None = None
     last_planned_at: str | None = None  # ISO date — last time user toggled focus
+    last_import_path: str | None = None  # last CSV path used by the policies importer
 
     @classmethod
     def load(cls, path: Path | None = None) -> Config:
@@ -49,6 +50,7 @@ class Config:
             export_prefs=prefs,
             db_path=data.get("db_path"),
             last_planned_at=data.get("last_planned_at"),
+            last_import_path=data.get("last_import_path"),
         )
 
     def save(self, path: Path | None = None) -> None:
@@ -61,6 +63,8 @@ class Config:
             payload["db_path"] = self.db_path
         if self.last_planned_at is not None:
             payload["last_planned_at"] = self.last_planned_at
+        if self.last_import_path is not None:
+            payload["last_import_path"] = self.last_import_path
         if self.export_prefs:
             payload["export_prefs"] = {
                 slug: asdict(prefs) for slug, prefs in self.export_prefs.items()

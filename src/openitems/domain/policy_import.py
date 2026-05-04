@@ -1,0 +1,297 @@
+"""CSV bulk-import for policies, scoped to a single engagement.
+
+Two-phase: ``preview()`` reads + classifies every row without touching the DB,
+and ``commit()`` inserts the rows the preview marked ``new`` via the regular
+``policies.create`` path. Dedup is by case-insensitive ``(carrier, policy_number)``
+within the engagement; rows where both halves are blank are never treated as
+duplicates (insert-only).
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from importlib import resources
+from pathlib import Path
+from typing import Literal
+
+from sqlalchemy.orm import Session
+
+from openitems.db.models import Engagement
+from openitems.domain import policies
+from openitems.domain.dates import DateParseError, parse_strict
+from openitems.domain.policies import PolicyDateError, PolicyInput
+
+CANONICAL_HEADERS: tuple[str, ...] = (
+    "name",
+    "carrier",
+    "coverage",
+    "policy_number",
+    "effective_date",
+    "expiration_date",
+    "location",
+    "description",
+)
+
+RowStatus = Literal["new", "duplicate", "error"]
+
+
+class ImportFileError(ValueError):
+    """Raised when the CSV cannot be opened or has no header row."""
+
+
+@dataclass(frozen=True)
+class RowOutcome:
+    line: int  # 1-based, header is line 1; first data row is line 2
+    raw: dict[str, str]
+    status: RowStatus
+    input: PolicyInput | None = None
+    message: str = ""
+    dedup_key: tuple[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class ImportPreview:
+    rows: list[RowOutcome]
+    unknown_columns: list[str] = field(default_factory=list)
+
+    @property
+    def new_count(self) -> int:
+        return sum(1 for r in self.rows if r.status == "new")
+
+    @property
+    def duplicate_count(self) -> int:
+        return sum(1 for r in self.rows if r.status == "duplicate")
+
+    @property
+    def error_count(self) -> int:
+        return sum(1 for r in self.rows if r.status == "error")
+
+
+@dataclass(frozen=True)
+class ImportResult:
+    imported: int
+    skipped_duplicates: int
+    errors: int
+    error_messages: list[str]
+
+
+def template_path() -> Path:
+    """Filesystem path to the bundled template CSV.
+
+    Works from a source checkout and from an installed wheel — uses
+    ``importlib.resources`` against the ``openitems.examples`` package.
+    """
+    return Path(str(resources.files("openitems.examples").joinpath("policies-import-template.csv")))
+
+
+def preview(
+    session: Session,
+    engagement: Engagement,
+    path: Path,
+) -> ImportPreview:
+    """Read ``path``, validate every row, classify against existing dedup keys.
+
+    Pure read — does not insert or flush. The returned ``ImportPreview`` is
+    handed back to ``commit()`` to perform the actual inserts.
+    """
+    try:
+        text = path.read_text(encoding="utf-8-sig", newline="")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ImportFileError(f"Couldn't read {path}: {exc}") from exc
+    return _preview_from_text(session, engagement, text)
+
+
+def _preview_from_text(
+    session: Session,
+    engagement: Engagement,
+    text: str,
+) -> ImportPreview:
+    # Use StringIO (not splitlines) so csv.reader correctly handles cells
+    # containing literal newlines inside quoted strings (common in pasted-from-
+    # Excel descriptions). reader.line_num then gives the *physical* line of
+    # each record's terminator, which matches what users see in their editor.
+    reader = csv.reader(io.StringIO(text))
+    try:
+        header_row = next(reader)
+    except StopIteration as exc:
+        raise ImportFileError("CSV is empty (no header row).") from exc
+
+    normalized = [h.strip().lower() for h in header_row]
+    known_indices: dict[str, int] = {}
+    unknown: list[str] = []
+    for idx, key in enumerate(normalized):
+        if not key:
+            continue
+        if key in CANONICAL_HEADERS:
+            known_indices.setdefault(key, idx)
+        elif key != "id":  # silently swallow id; treat anything else as unknown
+            unknown.append(header_row[idx])
+
+    if "name" not in known_indices:
+        raise ImportFileError("CSV header is missing the required 'name' column.")
+
+    existing_keys = _existing_dedup_keys(session, engagement)
+    seen_in_csv: set[tuple[str, str]] = set()
+    rows: list[RowOutcome] = []
+
+    for raw_row in reader:
+        line_offset = reader.line_num
+        raw = _row_to_dict(normalized, raw_row)
+        try:
+            input_ = _row_to_input(raw_row, known_indices)
+        except (DateParseError, PolicyDateError, ValueError) as exc:
+            rows.append(
+                RowOutcome(line=line_offset, raw=raw, status="error", message=str(exc))
+            )
+            continue
+
+        key = _dedup_key(input_)
+        if key is None:
+            rows.append(RowOutcome(line=line_offset, raw=raw, status="new", input=input_))
+            continue
+        if key in existing_keys or key in seen_in_csv:
+            reason = (
+                "Already exists in this engagement."
+                if key in existing_keys
+                else "Duplicate of an earlier row in this CSV."
+            )
+            rows.append(
+                RowOutcome(
+                    line=line_offset,
+                    raw=raw,
+                    status="duplicate",
+                    input=input_,
+                    message=reason,
+                    dedup_key=key,
+                )
+            )
+            continue
+
+        seen_in_csv.add(key)
+        rows.append(
+            RowOutcome(
+                line=line_offset,
+                raw=raw,
+                status="new",
+                input=input_,
+                dedup_key=key,
+            )
+        )
+
+    return ImportPreview(rows=rows, unknown_columns=unknown)
+
+
+def commit(
+    session: Session,
+    engagement: Engagement,
+    preview_obj: ImportPreview,
+) -> ImportResult:
+    """Insert every ``status=='new'`` row via ``policies.create``.
+
+    Defensive: if ``policies.create`` raises for a row the preview classified
+    as ``new`` (shouldn't happen — preview validates the same way), the row is
+    counted as an error in the result rather than aborting the whole import.
+    """
+    imported = 0
+    errors: list[str] = []
+    for row in preview_obj.rows:
+        if row.status != "new" or row.input is None:
+            continue
+        try:
+            policies.create(session, engagement, row.input)
+            imported += 1
+        except (PolicyDateError, ValueError) as exc:
+            errors.append(f"Line {row.line}: {exc}")
+    return ImportResult(
+        imported=imported,
+        skipped_duplicates=preview_obj.duplicate_count,
+        errors=preview_obj.error_count + len(errors),
+        error_messages=[
+            *(f"Line {r.line}: {r.message}" for r in preview_obj.rows if r.status == "error"),
+            *errors,
+        ],
+    )
+
+
+def _existing_dedup_keys(session: Session, engagement: Engagement) -> set[tuple[str, str]]:
+    keys: set[tuple[str, str]] = set()
+    for p in policies.list_for(session, engagement):
+        carrier = (p.carrier or "").strip().lower()
+        number = (p.policy_number or "").strip().lower()
+        if not carrier and not number:
+            continue
+        keys.add((carrier, number))
+    return keys
+
+
+def _row_to_dict(headers_lower: list[str], raw_row: list[str]) -> dict[str, str]:
+    """Build a dict keyed by the *lowercased* header name.
+
+    Wizard code looks up by canonical (lowercase) field name; storing keys in
+    their original casing would cause "error" rows (which can't fall back to
+    PolicyInput) to render every cell as "—" when the CSV used Title-Case headers.
+    """
+    out: dict[str, str] = {}
+    for idx, header in enumerate(headers_lower):
+        if not header:
+            continue
+        out[header] = raw_row[idx] if idx < len(raw_row) else ""
+    return out
+
+
+def _cell(raw_row: list[str], idx: int | None) -> str:
+    if idx is None or idx >= len(raw_row):
+        return ""
+    return raw_row[idx].strip()
+
+
+def _row_to_input(raw_row: list[str], headers: dict[str, int]) -> PolicyInput:
+    name = _cell(raw_row, headers.get("name"))
+    if not name:
+        raise ValueError("'name' is required.")
+
+    eff = parse_strict(
+        _cell(raw_row, headers.get("effective_date")),
+        field="effective_date",
+        prefer="current_period",
+    )
+    exp = parse_strict(
+        _cell(raw_row, headers.get("expiration_date")),
+        field="expiration_date",
+        prefer="current_period",
+    )
+    if eff is not None and exp is not None and eff > exp:
+        raise PolicyDateError(
+            f"Effective date ({eff.isoformat()}) is after expiration ({exp.isoformat()})."
+        )
+
+    return PolicyInput(
+        name=name,
+        carrier=_cell(raw_row, headers.get("carrier")),
+        coverage=_cell(raw_row, headers.get("coverage")),
+        policy_number=_cell(raw_row, headers.get("policy_number")),
+        effective_date=eff,
+        expiration_date=exp,
+        location=_cell(raw_row, headers.get("location")),
+        description=_cell(raw_row, headers.get("description")),
+    )
+
+
+def _dedup_key(input_: PolicyInput) -> tuple[str, str] | None:
+    carrier = input_.carrier.strip().lower()
+    number = input_.policy_number.strip().lower()
+    if not carrier and not number:
+        return None
+    return (carrier, number)
+
+
+def from_iterable(
+    session: Session,
+    engagement: Engagement,
+    lines: Iterable[str],
+) -> ImportPreview:
+    """Test seam: build a preview from in-memory CSV lines without touching disk."""
+    return _preview_from_text(session, engagement, "\n".join(lines))
