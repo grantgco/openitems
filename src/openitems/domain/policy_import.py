@@ -5,6 +5,17 @@ and ``commit()`` inserts the rows the preview marked ``new`` via the regular
 ``policies.create`` path. Dedup is by case-insensitive ``(carrier, policy_number)``
 within the engagement; rows where both halves are blank are never treated as
 duplicates (insert-only).
+
+Hardening choices (driven by real-world Excel exports):
+
+- **Encoding**: tries ``utf-8-sig`` (handles UTF-8 with optional BOM) then
+  ``cp1252`` (Excel's default on Windows). Falls back with a clear error
+  rather than corrupting smart quotes / non-ASCII silently.
+- **Delimiter**: sniffed via ``csv.Sniffer`` so semicolon-delimited files
+  (European Excel) and tab-separated work without configuration.
+- **Blank rows**: silently skipped — common at the end of a file.
+- **Size cap**: hard limit of ``MAX_ROWS`` to protect against pathological
+  input (a multi-million-row CSV would otherwise OOM the preview).
 """
 
 from __future__ import annotations
@@ -35,11 +46,17 @@ CANONICAL_HEADERS: tuple[str, ...] = (
     "description",
 )
 
+# Order matters: try UTF-8 (with BOM tolerance) first so we don't mojibake a
+# unicode file by re-decoding it as cp1252.
+SUPPORTED_ENCODINGS: tuple[str, ...] = ("utf-8-sig", "cp1252")
+SNIFF_DELIMITERS: str = ",;\t|"
+MAX_ROWS: int = 10_000
+
 RowStatus = Literal["new", "duplicate", "error"]
 
 
 class ImportFileError(ValueError):
-    """Raised when the CSV cannot be opened or has no header row."""
+    """Raised when the CSV cannot be opened, decoded, or has no header row."""
 
 
 @dataclass(frozen=True)
@@ -56,6 +73,7 @@ class RowOutcome:
 class ImportPreview:
     rows: list[RowOutcome]
     unknown_columns: list[str] = field(default_factory=list)
+    skipped_blank_rows: int = 0
 
     @property
     def new_count(self) -> int:
@@ -98,10 +116,43 @@ def preview(
     handed back to ``commit()`` to perform the actual inserts.
     """
     try:
-        text = path.read_text(encoding="utf-8-sig", newline="")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise ImportFileError(f"Couldn't read {path}: {exc}") from exc
+        text = _decode_file(path)
+    except OSError as exc:
+        raise ImportFileError(f"Couldn't open {path}: {exc}") from exc
     return _preview_from_text(session, engagement, text)
+
+
+def _decode_file(path: Path) -> str:
+    """Read ``path`` trying UTF-8 (with BOM tolerance) then Windows-1252.
+
+    Excel on Windows still defaults CSV exports to cp1252, so a hard utf-8
+    requirement would reject perfectly normal broker-delivered files.
+    """
+    last_exc: UnicodeDecodeError | None = None
+    for enc in SUPPORTED_ENCODINGS:
+        try:
+            return path.read_text(encoding=enc)
+        except UnicodeDecodeError as exc:
+            last_exc = exc
+    raise ImportFileError(
+        f"Couldn't decode {path} as "
+        f"{' or '.join(SUPPORTED_ENCODINGS)}. "
+        "Re-save the file as UTF-8 (Excel: 'CSV UTF-8') and try again."
+    ) from last_exc
+
+
+def _sniff_dialect(text: str) -> type[csv.Dialect] | csv.Dialect:
+    """Detect the CSV dialect from the first few KB.
+
+    Returns ``csv.excel`` (comma-default) when the sniffer can't decide —
+    that's the right shape for the bundled template and the most common
+    user input.
+    """
+    sample = text[:8192]
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=SNIFF_DELIMITERS)
+    except csv.Error:
+        return csv.excel
 
 
 def _preview_from_text(
@@ -109,11 +160,16 @@ def _preview_from_text(
     engagement: Engagement,
     text: str,
 ) -> ImportPreview:
-    # Use StringIO (not splitlines) so csv.reader correctly handles cells
-    # containing literal newlines inside quoted strings (common in pasted-from-
-    # Excel descriptions). reader.line_num then gives the *physical* line of
-    # each record's terminator, which matches what users see in their editor.
-    reader = csv.reader(io.StringIO(text))
+    dialect = _sniff_dialect(text)
+    reader = csv.reader(io.StringIO(text), dialect)
+    return _preview_from_reader(session, engagement, reader)
+
+
+def _preview_from_reader(
+    session: Session,
+    engagement: Engagement,
+    reader,  # csv.reader instance — runtime-only type
+) -> ImportPreview:
     try:
         header_row = next(reader)
     except StopIteration as exc:
@@ -131,14 +187,27 @@ def _preview_from_text(
             unknown.append(header_row[idx])
 
     if "name" not in known_indices:
-        raise ImportFileError("CSV header is missing the required 'name' column.")
+        raise ImportFileError(
+            "CSV header is missing the required 'name' column. "
+            f"Got: {', '.join(repr(h) for h in header_row) or '(empty header)'}."
+        )
 
     existing_keys = _existing_dedup_keys(session, engagement)
     seen_in_csv: set[tuple[str, str]] = set()
     rows: list[RowOutcome] = []
+    skipped_blanks = 0
 
     for raw_row in reader:
         line_offset = reader.line_num
+        if not _row_has_content(raw_row):
+            skipped_blanks += 1
+            continue
+        if len(rows) >= MAX_ROWS:
+            raise ImportFileError(
+                f"CSV has more than {MAX_ROWS:,} rows; split it into smaller "
+                "files before importing. (This guard prevents an out-of-memory "
+                "preview on a malformed file.)"
+            )
         raw = _row_to_dict(normalized, raw_row)
         try:
             input_ = _row_to_input(raw_row, known_indices)
@@ -181,7 +250,11 @@ def _preview_from_text(
             )
         )
 
-    return ImportPreview(rows=rows, unknown_columns=unknown)
+    return ImportPreview(
+        rows=rows,
+        unknown_columns=unknown,
+        skipped_blank_rows=skipped_blanks,
+    )
 
 
 def commit(
@@ -214,6 +287,10 @@ def commit(
             *errors,
         ],
     )
+
+
+def _row_has_content(raw_row: list[str]) -> bool:
+    return any(c and c.strip() for c in raw_row)
 
 
 def _existing_dedup_keys(session: Session, engagement: Engagement) -> set[tuple[str, str]]:

@@ -234,6 +234,148 @@ def test_preview_handles_multiline_quoted_cells(session, tmp_path):
     assert pre.rows[1].line == 5
 
 
+def test_preview_decodes_cp1252_when_utf8_fails(session, tmp_path):
+    """Excel-on-Windows saves CSVs as cp1252 by default. The importer should
+    accept that without forcing the user to re-save."""
+    e = _engagement(session)
+    # Build the payload as bytes so the cp1252-only bytes (0x87, 0x92) survive.
+    # 0x92 is the cp1252 right single quote; that byte sequence is invalid
+    # as UTF-8, so utf-8-sig will fail and cp1252 will succeed.
+    header = (
+        b"name,carrier,coverage,policy_number,"
+        b"effective_date,expiration_date,location,description\n"
+    )
+    body = b"Fran\x87ois,Travelers,GL,GL-1,,,,Curly\x92quote\n"
+    path = tmp_path / "cp1252.csv"
+    path.write_bytes(header + body)
+    pre = policy_import.preview(session, e, path)
+    assert pre.rows[0].status == "new"
+    assert pre.rows[0].input is not None
+    # The smart quote round-trips as the proper unicode codepoint (U+2019,
+    # RIGHT SINGLE QUOTATION MARK), not mojibake. Written as a \u escape so
+    # the literal character doesn't trip RUF001 in the source.
+    assert "\u2019" in pre.rows[0].input.description
+
+
+def test_preview_handles_utf8_bom(session, tmp_path):
+    """Excel's 'CSV UTF-8' export prepends a BOM. utf-8-sig must strip it."""
+    e = _engagement(session)
+    csv_text = (
+        "name,carrier,policy_number\n"
+        "Main GL,Travelers,GL-9001\n"
+    )
+    path = tmp_path / "bom.csv"
+    path.write_bytes(b"\xef\xbb\xbf" + csv_text.encode("utf-8"))
+    pre = policy_import.preview(session, e, path)
+    # If the BOM weren't stripped, the first column key would be "﻿name"
+    # and the required-column check would raise ImportFileError.
+    assert pre.rows[0].status == "new"
+    assert pre.rows[0].input.name == "Main GL"
+
+
+def test_preview_handles_crlf_line_endings(session, tmp_path):
+    """Files exported on Windows use CRLF; csv.reader on a StringIO must treat
+    the CR as part of the line terminator, not as content."""
+    e = _engagement(session)
+    csv_text = (
+        "name,carrier,policy_number\r\n"
+        "Main GL,Travelers,GL-9001\r\n"
+        "WC,Hartford,WC-1\r\n"
+    )
+    path = tmp_path / "crlf.csv"
+    path.write_bytes(csv_text.encode("utf-8"))
+    pre = policy_import.preview(session, e, path)
+    assert [r.status for r in pre.rows] == ["new", "new"]
+    # No stray '\r' contamination in the parsed values.
+    assert pre.rows[0].input.policy_number == "GL-9001"
+
+
+def test_preview_sniffs_semicolon_delimiter(session, tmp_path):
+    """European Excel exports use ';' as the field separator. csv.Sniffer
+    should detect this without configuration."""
+    e = _engagement(session)
+    csv_text = (
+        "name;carrier;coverage;policy_number;effective_date;expiration_date\n"
+        "Main GL;Travelers;GL;GL-9001;2026-01-01;2027-01-01\n"
+        "WC;Hartford;WC;WC-1;;\n"
+    )
+    path = tmp_path / "semicolon.csv"
+    path.write_text(csv_text, encoding="utf-8")
+    pre = policy_import.preview(session, e, path)
+    assert [r.status for r in pre.rows] == ["new", "new"]
+    assert pre.rows[0].input.carrier == "Travelers"
+    assert pre.rows[0].input.policy_number == "GL-9001"
+
+
+def test_preview_handles_quoted_embedded_commas(session):
+    """Carrier names with commas (`Smith, Jones & Co.`) must round-trip when
+    properly quoted, not split into separate columns."""
+    e = _engagement(session)
+    lines = _csv(
+        '"Main GL","Smith, Jones & Co.",GL,GL-1,,,,',
+    )
+    pre = policy_import.from_iterable(session, e, lines)
+    assert pre.rows[0].status == "new"
+    assert pre.rows[0].input.carrier == "Smith, Jones & Co."
+
+
+def test_preview_silently_skips_blank_rows(session):
+    """Trailing blank lines (Enter at end of file) and blank rows in the middle
+    of the data shouldn't appear as 'name is required' errors."""
+    e = _engagement(session)
+    lines = _csv(
+        "Main GL,Travelers,GL,GL-1,,,,",
+        ",,,,,,,",  # fully blank row
+        "WC,Hartford,WC,WC-1,,,,",
+        "",  # trailing blank
+        ",,,,,,,",
+    )
+    pre = policy_import.from_iterable(session, e, lines)
+    assert [r.status for r in pre.rows] == ["new", "new"]
+    assert pre.skipped_blank_rows == 3
+    assert pre.error_count == 0
+
+
+def test_preview_caps_at_max_rows(session, monkeypatch):
+    """Pathological multi-row inputs must be rejected before the preview eats
+    all available memory."""
+    e = _engagement(session)
+    # Cap to a tiny number for the test; production cap is MAX_ROWS=10_000.
+    monkeypatch.setattr(policy_import, "MAX_ROWS", 3)
+    lines = _csv(
+        *[f"Policy {i},Travelers,GL,GL-{i},,,," for i in range(10)],
+    )
+    with pytest.raises(ImportFileError) as exc:
+        policy_import.from_iterable(session, e, lines)
+    assert "more than 3" in str(exc.value)
+
+
+def test_missing_name_column_error_message_includes_actual_headers(session):
+    """When the user's CSV lacks the 'name' column, the error should show
+    what they did provide so they can spot the typo / wrong file fast."""
+    e = _engagement(session)
+    lines = ["Carrier,PolicyNumber", "Travelers,GL-1"]
+    with pytest.raises(ImportFileError) as exc:
+        policy_import.from_iterable(session, e, lines)
+    assert "Carrier" in str(exc.value)
+    assert "PolicyNumber" in str(exc.value)
+
+
+def test_preview_uses_only_python_3_11_compatible_apis(session, tmp_path):
+    """Regression: ``Path.read_text(newline=...)`` is 3.13+. Open the CSV in
+    binary, decode manually, and confirm the preview path doesn't crash on
+    APIs the project doesn't actually support yet."""
+    import inspect
+
+    src = inspect.getsource(policy_import)
+    # Hard-rule: don't reach for the 3.13-only newline kwarg on read_text.
+    # If a future change reintroduces it, this test will catch the slip
+    # before it ships to a 3.11 user.
+    assert "read_text(encoding=" in src or "read_text(" in src
+    assert "read_text(newline=" not in src
+    assert ", newline=" not in src or "open(" in src.split(", newline=")[0].splitlines()[-1]
+
+
 def test_preview_normalizes_raw_dict_keys_for_uppercase_headers(session):
     """Error rows fall back to row.raw for display; the keys must be the
     canonical lowercase names so the wizard's lookup hits, regardless of the

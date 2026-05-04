@@ -136,16 +136,16 @@ class ImportPoliciesScreen(ModalScreen[bool]):
     def _render_step_2(self) -> None:
         assert self._preview is not None
         pre = self._preview
-        unknown = ""
+        notes: list[str] = []
         if pre.unknown_columns:
-            unknown = (
-                f"\n[dim]Ignored unknown columns: "
-                f"{', '.join(pre.unknown_columns)}[/dim]"
-            )
+            notes.append(f"Ignored unknown columns: {', '.join(pre.unknown_columns)}")
+        if pre.skipped_blank_rows:
+            notes.append(f"Skipped {pre.skipped_blank_rows} blank row(s)")
+        suffix = "\n" + "\n".join(f"[dim]{note}[/dim]" for note in notes) if notes else ""
         self.body.update(
             "[dim]step 2/3 · review what will happen. Only [b]new[/b] rows "
             "will be inserted; duplicates and errors are skipped.[/dim]"
-            + unknown
+            + suffix
         )
         self.path_input.display = False
         self.template_btn.display = False
