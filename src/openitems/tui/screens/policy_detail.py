@@ -32,12 +32,7 @@ class PolicyDetailScreen(ModalScreen[bool]):
         super().__init__()
         self.policy_id = policy_id
         with session_scope() as s:
-            policy = s.get(Policy, policy_id)
-            self._coverages = (
-                policies.coverage_suggestions(s, engagement=policy.engagement)
-                if policy
-                else []
-            )
+            self._coverages = policies.coverage_suggestions(s)
         self.name_input = Input(id="policy-name")
         self.carrier_input = Input(id="policy-carrier")
         self.coverage_input = Input(

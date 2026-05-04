@@ -25,12 +25,7 @@ class NewPolicyScreen(ModalScreen[bool]):
         super().__init__()
         self.engagement_slug = engagement_slug
         with session_scope() as s:
-            engagement = engagements.get_by_slug(s, engagement_slug)
-            self._coverages = (
-                policies.coverage_suggestions(s, engagement=engagement)
-                if engagement
-                else []
-            )
+            self._coverages = policies.coverage_suggestions(s)
         self.name_input = Input(placeholder="Policy name (e.g. Main GL 2026)", id="policy-name")
         self.carrier_input = Input(placeholder="Carrier", id="policy-carrier")
         self.coverage_input = Input(
