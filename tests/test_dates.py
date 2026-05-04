@@ -86,3 +86,17 @@ def test_parse_strict_distinguishes_empty_from_unparseable():
     err = exc_info.value
     assert err.field == "Due"
     assert "sometime maybe" in str(err)
+
+
+def test_parse_strict_current_period_does_not_shift_to_future():
+    """Without ``prefer='current_period'``, ``"Jan 1"`` would silently bump
+    to next year — pushing policy effective dates past their expiration and
+    breaking the eff ≤ exp invariant. Calendar-literal parsing keeps the
+    natural year."""
+    eff = parse_strict("Jan 1", field="Effective", prefer="current_period")
+    assert eff is not None
+    assert eff.month == 1 and eff.day == 1
+    # Two-digit years parse to the current century, not the next one.
+    parsed_short = parse_strict("1/1/26", field="Effective", prefer="current_period")
+    assert parsed_short is not None
+    assert parsed_short.year < 2100

@@ -36,13 +36,13 @@ _SINCE_KEYWORDS: dict[str, str] = {
 }
 
 
-def parse(value: str | None) -> date | None:
+def parse(value: str | None, *, prefer: str = "future") -> date | None:
     if not value:
         return None
     value = value.strip()
     if not value or value in _EMPTY_TOKENS:
         return None
-    parsed = dateparser.parse(value, settings={"PREFER_DATES_FROM": "future"})
+    parsed = dateparser.parse(value, settings={"PREFER_DATES_FROM": prefer})
     if parsed is None:
         return None
     return parsed.date() if isinstance(parsed, datetime) else parsed
@@ -57,19 +57,26 @@ class DateParseError(ValueError):
         self.raw = raw
 
 
-def parse_strict(value: str | None, *, field: str) -> date | None:
+def parse_strict(value: str | None, *, field: str, prefer: str = "future") -> date | None:
     """Like ``parse``, but raises ``DateParseError`` on a non-empty bad input.
 
     Use this from form save handlers so the user gets feedback when their
     input is unparseable — silently dropping it (the previous behavior) is
     what made the bug invisible.
+
+    ``prefer`` maps to dateparser's ``PREFER_DATES_FROM`` setting. Defaults to
+    ``"future"`` for task-shaped fields (start/due) where most inputs target a
+    future date. Pass ``"current_period"`` (calendar-literal) for fields where
+    the date can sit anywhere relative to today — e.g. policy effective dates
+    routinely refer to past starts, and the future preference silently pushes
+    bare ``"Jan 1"`` to next year and ``"1/1/26"`` to 2126.
     """
     if not value:
         return None
     raw = value.strip()
     if not raw or raw in _EMPTY_TOKENS:
         return None
-    parsed = dateparser.parse(raw, settings={"PREFER_DATES_FROM": "future"})
+    parsed = dateparser.parse(raw, settings={"PREFER_DATES_FROM": prefer})
     if parsed is None:
         raise DateParseError(field, raw)
     return parsed.date() if isinstance(parsed, datetime) else parsed

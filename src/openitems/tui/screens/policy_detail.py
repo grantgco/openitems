@@ -165,8 +165,12 @@ class PolicyDetailScreen(ModalScreen[bool]):
 
     def action_save(self) -> None:
         try:
-            eff = parse_date_strict(self.effective_input.value, field="Effective")
-            exp = parse_date_strict(self.expiration_input.value, field="Expiration")
+            eff = parse_date_strict(
+                self.effective_input.value, field="Effective", prefer="current_period"
+            )
+            exp = parse_date_strict(
+                self.expiration_input.value, field="Expiration", prefer="current_period"
+            )
         except DateParseError as exc:
             self.app.notify(str(exc), severity="error")
             return
