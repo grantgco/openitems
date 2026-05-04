@@ -29,6 +29,16 @@ class StatusBar(Static):
         ("n", "note"),
         ("i", "jot"),
     ]
+    # Shown in place of the head when sitting on the Inbox engagement —
+    # surfaces M (move-to-engagement) so promoting jotted items is
+    # discoverable without opening the help screen.
+    INBOX_HEAD: list[tuple[str, str]] = [
+        ("j/k", "move"),
+        ("M", "→ engagement"),
+        ("e", "edit"),
+        ("a", "add"),
+        ("i", "jot"),
+    ]
     # Shown when there's room. Most-important first; dropped from the END
     # of this list when narrow terminals can't fit them.
     OPTIONAL_MIDDLE: list[tuple[str, str]] = [
@@ -49,6 +59,13 @@ class StatusBar(Static):
 
     def __init__(self) -> None:
         super().__init__("", id="status-bar")
+        self._inbox_mode = False
+
+    def set_inbox_mode(self, active: bool) -> None:
+        if active == self._inbox_mode:
+            return
+        self._inbox_mode = active
+        self.update(self._render_for_width(self.size.width or 200))
 
     def on_mount(self) -> None:
         self.update(self._render_for_width(self.size.width or 200))
@@ -58,17 +75,14 @@ class StatusBar(Static):
 
     def _render_for_width(self, width: int) -> Text:
         """Pick the largest middle-subset that fits in ``width`` cells."""
+        head = self.INBOX_HEAD if self._inbox_mode else self.ESSENTIAL_HEAD
         for n in range(len(self.OPTIONAL_MIDDLE), -1, -1):
-            entries = (
-                self.ESSENTIAL_HEAD
-                + self.OPTIONAL_MIDDLE[:n]
-                + self.ESSENTIAL_TAIL
-            )
+            entries = head + self.OPTIONAL_MIDDLE[:n] + self.ESSENTIAL_TAIL
             text = self._render_entries(entries)
             if text.cell_len <= width:
                 return text
         # Even head + tail don't fit — render anyway (Textual will clip).
-        return self._render_entries(self.ESSENTIAL_HEAD + self.ESSENTIAL_TAIL)
+        return self._render_entries(head + self.ESSENTIAL_TAIL)
 
     def _render_entries(self, entries: list[tuple[str, str]]) -> Text:
         text = Text(no_wrap=True)

@@ -156,6 +156,7 @@ class MainScreen(Screen):
             self.bucket_pane.populate(total=0, done=0, buckets=[], tags=[])
             self.items_pane.populate([])
             self.detail_pane.show_empty()
+            self.status_bar.set_inbox_mode(False)
             return
         with session_scope() as s:
             engagement = engagements.get_by_slug(s, self._engagement_slug)
@@ -196,6 +197,7 @@ class MainScreen(Screen):
             self.titlebar.set_engagement(
                 engagement.name, has_url=bool(engagement.homepage_url)
             )
+            self.status_bar.set_inbox_mode(engagement.is_inbox)
             self.titlebar.set_counts(
                 open_count=len(open_tasks),
                 overdue=overdue_count(open_tasks, today),
