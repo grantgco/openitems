@@ -9,6 +9,7 @@ from openitems.domain.policies import PolicyInput
 from openitems.domain.tasks import TaskInput
 from openitems.export.theme import (
     CLR_RED,
+    CLR_SUBTOTAL,
 )
 from openitems.export.workbook import OUT_COLS, export_engagement
 
@@ -99,9 +100,9 @@ def test_export_creates_workbook_with_expected_structure(session, tmp_path):
     assert ws["A2"].value == "  Open Items List"
     assert ws["A2"].font.bold is True
 
-    # Row 3 — subtitle mentions counts (3 open, 2 buckets — Engineering + Design)
-    assert "3 open items" in ws["A3"].value
-    assert "2 buckets" in ws["A3"].value
+    # Row 3 — accent band; shading kept but no text
+    assert ws["A3"].value is None
+    assert ws["A3"].fill.start_color.rgb.endswith(CLR_SUBTOTAL)
 
     # Header row 5
     assert ws.cell(row=5, column=2).value == "#"
@@ -150,16 +151,20 @@ def test_export_creates_workbook_with_expected_structure(session, tmp_path):
     assert ws.freeze_panes == "A6"
     assert ws.sheet_view.showGridLines is False
 
-    # Summary footer is somewhere later, mentions overdue count
-    summary_text = None
+    # Summary footer band: shaded but no text
+    summary_row = None
     for row in ws.iter_rows(min_row=overdue_row + 6, max_col=1):
-        v = row[0].value
-        if v and "Summary:" in v:
-            summary_text = v
+        cell = row[0]
+        if (
+            cell.value is None
+            and cell.fill
+            and cell.fill.start_color
+            and (cell.fill.start_color.rgb or "").endswith(CLR_SUBTOTAL)
+        ):
+            summary_row = cell.row
             break
-    assert summary_text is not None
-    assert "1 overdue" in summary_text
-    assert "1 high/urgent priority" in summary_text
+    assert summary_row is not None
+    assert ws.cell(row=summary_row, column=1).value is None
 
 
 def test_export_excludes_completed_and_deleted(session, tmp_path):
@@ -245,9 +250,8 @@ def test_export_includes_policies_tab_when_present(session, tmp_path):
     # Title block
     assert ws["A1"].value == "  Acme"
     assert ws["A2"].value == "  Policies"
-    assert "3 policies" in ws["A3"].value
-    assert "1 lapsed" in ws["A3"].value
-    assert "1 renewing ≤30d" in ws["A3"].value
+    assert ws["A3"].value is None
+    assert ws["A3"].fill.start_color.rgb.endswith(CLR_SUBTOTAL)
 
     # Column header row
     assert ws.cell(row=5, column=3).value == "Policy"

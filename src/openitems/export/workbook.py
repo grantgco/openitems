@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -21,10 +21,8 @@ from openpyxl.worksheet.worksheet import Worksheet
 from openitems.db.models import Engagement, Policy, Task
 from openitems.domain.policies import days_to_renewal
 from openitems.domain.tasks import (
-    high_priority_count,
     is_completed,
     is_late,
-    overdue_count,
     total_checks,
 )
 from openitems.domain.text import clean_text
@@ -115,13 +113,7 @@ def _row_height_for(*texts_and_cols: tuple[str | None, str]) -> float:
     return max(_MIN_TASK_ROW_HEIGHT, lines * _LINE_HEIGHT_PT + 6)
 
 
-def _write_title_block(
-    ws: Worksheet,
-    *,
-    client_name: str,
-    total_open: int,
-    bucket_count: int,
-) -> None:
+def _write_title_block(ws: Worksheet, *, client_name: str) -> None:
     # Row 1 — client name
     ws.merge_cells("A1:I1")
     ws.row_dimensions[1].height = 28
@@ -138,17 +130,9 @@ def _write_title_block(
     title.alignment = Alignment(vertical="center")
     _apply_band(ws, 2, CLR_NAVY)
 
-    # Row 3 — subtitle
+    # Row 3 — accent band (shading only, no text)
     ws.merge_cells("A3:I3")
     ws.row_dimensions[3].height = 22
-    subtitle_text = (
-        "  Generated: "
-        + datetime.now().strftime("%B %-d, %Y %-I:%M %p")
-        + f"  |  {total_open} open items  |  {bucket_count} buckets"
-    )
-    sub = ws.cell(row=3, column=1, value=subtitle_text)
-    sub.font = Font(name=FONT_NAME, size=9, color=CLR_GRAY_MED)
-    sub.alignment = Alignment(vertical="center")
     _apply_band(ws, 3, CLR_SUBTOTAL)
 
     # Row 4 — spacer
@@ -298,28 +282,9 @@ def _write_checklist_block(ws: Worksheet, start_row: int, task: Task) -> int:
     return row + 1
 
 
-def _write_summary(
-    ws: Worksheet,
-    row: int,
-    *,
-    total_open: int,
-    bucket_count: int,
-    total_high: int,
-    total_overdue: int,
-) -> None:
+def _write_summary(ws: Worksheet, row: int) -> None:
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=OUT_COLS)
     ws.row_dimensions[row].height = 24
-    cell = ws.cell(
-        row=row,
-        column=1,
-        value=(
-            f"  Summary: {total_open} open items across {bucket_count} buckets"
-            f"  |  {total_high} high/urgent priority"
-            f"  |  {total_overdue} overdue"
-        ),
-    )
-    cell.font = Font(name=FONT_NAME, size=9, bold=True, color=CLR_NAVY)
-    cell.alignment = Alignment(vertical="center")
     _apply_band(ws, row, CLR_SUBTOTAL)
 
 
@@ -377,10 +342,6 @@ def export_engagement(
         by_bucket.setdefault(bucket_name, []).append(t)
     bucket_names = sorted(by_bucket.keys(), key=lambda n: bucket_meta[n])
 
-    total_open = len(open_tasks)
-    total_overdue = overdue_count(open_tasks, today)
-    total_high = high_priority_count(open_tasks)
-
     wb = Workbook()
     ws = wb.active
     sheet_name = f"Open Items - {today.strftime('%Y-%m-%d')}"
@@ -393,12 +354,7 @@ def export_engagement(
     for col, width in COL_WIDTHS.items():
         ws.column_dimensions[col].width = width
 
-    _write_title_block(
-        ws,
-        client_name=engagement.name,
-        total_open=total_open,
-        bucket_count=len(bucket_names),
-    )
+    _write_title_block(ws, client_name=engagement.name)
 
     row = 6
     for bucket_name in bucket_names:
@@ -420,14 +376,7 @@ def export_engagement(
         ws.row_dimensions[row].height = 8  # spacer
         row += 1
 
-    _write_summary(
-        ws,
-        row,
-        total_open=total_open,
-        bucket_count=len(bucket_names),
-        total_high=total_high,
-        total_overdue=total_overdue,
-    )
+    _write_summary(ws, row)
 
     _apply_page_setup(ws, row)
 
@@ -515,25 +464,6 @@ def _write_policies_sheet(
 
     ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=_POL_OUT_COLS)
     ws.row_dimensions[3].height = 22
-    lapsed = sum(1 for p in policies if (d := days_to_renewal(p, today)) is not None and d < 0)
-    soon = sum(
-        1
-        for p in policies
-        if (d := days_to_renewal(p, today)) is not None and 0 <= d <= 30
-    )
-    subtitle = ws.cell(
-        row=3,
-        column=1,
-        value=(
-            "  Generated: "
-            + datetime.now().strftime("%B %-d, %Y %-I:%M %p")
-            + f"  |  {len(policies)} policies"
-            + (f"  |  {lapsed} lapsed" if lapsed else "")
-            + (f"  |  {soon} renewing ≤30d" if soon else "")
-        ),
-    )
-    subtitle.font = Font(name=FONT_NAME, size=9, color=CLR_GRAY_MED)
-    subtitle.alignment = Alignment(vertical="center")
     for c in range(1, _POL_OUT_COLS + 1):
         ws.cell(row=3, column=c).fill = _fill(CLR_SUBTOTAL)
 
